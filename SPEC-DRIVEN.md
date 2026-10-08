@@ -1,4 +1,4 @@
-# LoginBuskar / Janus — Spec-Driven Design (pré-código)
+# Janus — Spec-Driven Design (pré-código)
 
 **Repo:** https://github.com/newsand/janus  
 **Produto:** serviço de identidade JWT (sem redirect, sem roles)  
@@ -6,7 +6,7 @@
 
 ## 1. Problema
 
-Fronts (Buskar, Vistoria, etc.) precisam autenticar usuários sem OAuth bounce. Um serviço único prova identidade e emite JWT; autorização fica nos produtos.
+Fronts (Vistoria, etc.) precisam autenticar usuários sem OAuth bounce. Um serviço único prova identidade e emite JWT; autorização fica nos produtos.
 
 ## 2. Fora / dentro
 

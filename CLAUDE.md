@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this service is
 
-LoginBuskar (`janus`): a JWT identity service. It only proves who a user is — it does **not** do roles/RBAC/authorization or OAuth-style redirects. Product-level authorization lives in the consuming systems (Buskar, Vistoria, etc.), which map the JWT `sub` (a UUID) to their own roles.
+Janus (`janus`): a JWT identity service. It only proves who a user is — it does **not** do roles/RBAC/authorization or OAuth-style redirects. Product-level authorization lives in the consuming systems (Vistoria, etc.), which map the JWT `sub` (a UUID) to their own roles.
 
 Full product rules: `AUTH-MVP.md`. Architecture rationale/decisions: `SPEC-DRIVEN.md`. Both are canonical specs — check them before changing auth/refresh/2FA/invite/magic-link behavior, since the rules there (TTLs, rotation, reuse detection, etc.) are deliberate and "fechado" (closed/settled), not incidental.
 

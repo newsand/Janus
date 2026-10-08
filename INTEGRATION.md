@@ -1,10 +1,10 @@
-# Guia de Integração — LoginBuskar
+# Guia de Integração — Janus
 
 > **Versão:** 1.2 (2026-09-18) — Adicionado: check local de exp + contrato recomendado para product APIs.
 
 Guia para clientes (front-ends, BFFs, apps mobile) consumirem o serviço de autenticação.
 
-**Escopo do serviço:** identidade via JWT. O LoginBuskar **não** gerencia roles, permissões ou RBAC — isso é responsabilidade do sistema que consome o JWT (Buskar, Vistoria, etc.).
+**Escopo do serviço:** identidade via JWT. O Janus **não** gerencia roles, permissões ou RBAC — isso é responsabilidade do sistema que consome o JWT (Vistoria, etc.).
 
 ---
 
@@ -161,7 +161,7 @@ HTTP/1.1 200 OK
 
 ```
 ┌────────┐          ┌────────────┐
-│ Client │          │ LoginBuskar│
+│ Client │          │ Janus      │
 └───┬────┘          └─────┬──────┘
     │  POST /v1/auth/login│
     │  {email, password}  │
@@ -194,7 +194,7 @@ O refresh token renova o access token antes/após expiração. **Crítico:** imp
 | Condição | Como Verificar | Ação |
 |----------|----------------|------|
 | **1. JWT expirado localmente** | Decode payload (base64url), verifique `exp < now` | Refresh **antes** da requisição (proativo) |
-| **2. Auth 401 do LoginBuskar** | Body contém erro conhecido (ver abaixo) | Refresh após 401 |
+| **2. Auth 401 do Janus** | Body contém erro conhecido (ver abaixo) | Refresh após 401 |
 | **3. Auth 401 padronizado de produto** | Body ou header indica auth expirado (ver contrato) | Refresh após 401 |
 
 **NÃO faça refresh** em 401/403 de **autorização** (permissão negada, tenant errado, recurso não autorizado) — exiba erro ao usuário.
@@ -220,7 +220,7 @@ function isAccessExpired() {
 }
 ```
 
-### Erros Conhecidos do LoginBuskar (Auth 401)
+### Erros Conhecidos do Janus (Auth 401)
 
 Faça refresh quando o body do 401 for **exatamente** um destes:
 
@@ -228,7 +228,7 @@ Faça refresh quando o body do 401 for **exatamente** um destes:
 - `{"error": "missing authorization header"}`
 - `{"error": "invalid authorization header"}`
 
-### Contrato Recomendado para Product APIs (Buskar, Vistoria, etc.)
+### Contrato Recomendado para Product APIs (Vistoria, etc.)
 
 **Problema:** Product APIs frequentemente usam middleware genérico que retorna 401 sem body padronizado quando o JWT expira. O cliente não consegue distinguir de erros de autorização.
 
@@ -236,7 +236,7 @@ Faça refresh quando o body do 401 for **exatamente** um destes:
 
 | Opção | Formato | Exemplo |
 |-------|---------|---------|
-| **A. Body padronizado** | `{"error": "invalid token"}` | Igual ao LoginBuskar |
+| **A. Body padronizado** | `{"error": "invalid token"}` | Igual ao Janus |
 | **B. Header WWW-Authenticate** | `Bearer error="invalid_token"` | RFC 6750 |
 | **C. Código estável** | `{"code": "AUTH_EXPIRED", ...}` | Extensível |
 
@@ -260,7 +260,7 @@ const AUTH_EXPIRED_CODES = new Set([
 function isAuthExpiredResponse(response, body) {
   if (response.status !== 401) return false;
   
-  // Opção A: erro conhecido do LoginBuskar
+  // Opção A: erro conhecido do Janus
   if (body?.error && AUTH_ERRORS.has(body.error)) return true;
   
   // Opção B: WWW-Authenticate header (RFC 6750)
@@ -331,7 +331,7 @@ APÓS receber resposta:
 // ============================================================
 const AUTH_BASE_URL = 'https://auth.example.com';
 
-// Erros conhecidos do LoginBuskar
+// Erros conhecidos do Janus
 const AUTH_ERRORS = new Set([
   'invalid token',
   'missing authorization header',
@@ -427,7 +427,7 @@ async function isAuthExpiredResponse(response) {
     const cloned = response.clone();
     const body = await cloned.json();
     
-    // Opção A: erro conhecido do LoginBuskar
+    // Opção A: erro conhecido do Janus
     if (body.error && AUTH_ERRORS.has(body.error)) return true;
     
     // Opção C: código estável de produto
@@ -690,7 +690,7 @@ HTTP/1.1 200 OK
 
 ```
 ┌────────┐          ┌────────────┐          ┌───────────────┐
-│ Client │          │ LoginBuskar│          │ Authenticator │
+│ Client │          │ Janus      │          │ Authenticator │
 └───┬────┘          └─────┬──────┘          └───────┬───────┘
     │  POST /v1/auth/login│                         │
     │────────────────────>│                         │
@@ -921,7 +921,7 @@ Após receber `requires_2fa`, siga o [Fluxo 2FA](#fluxo-login-com-2fa) com o `ch
 
 ```
 ┌────────┐          ┌────────────┐          ┌───────┐
-│ Client │          │ LoginBuskar│          │ Email │
+│ Client │          │ Janus      │          │ Email │
 └───┬────┘          └─────┬──────┘          └───┬───┘
     │  POST /v1/auth/magic-link                 │
     │  {email}            │                     │
@@ -962,7 +962,7 @@ Service keys são segredos de máquina para sistemas backend chamarem CRUD e inv
 
 ```
 ┌──────────┐       ┌─────────────┐       ┌────────────┐
-│ Browser  │──────>│ Seu Backend │──────>│ LoginBuskar│
+│ Browser  │──────>│ Seu Backend │──────>│ Janus      │
 │ (SPA)    │       │ (BFF/API)   │       │            │
 └──────────┘       └─────────────┘       └────────────┘
      │                   │                     │
@@ -1093,7 +1093,7 @@ const response = await fetch('/v1/users', {
 async function fetchWithAuth(url) {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }});
   if (res.status === 401) {
-    await refresh(); // E se for 401 de permissão do Buskar?
+    await refresh(); // E se for 401 de permissão do produto?
     return fetchWithAuth(url); // Loop infinito em recurso não autorizado!
   }
 }

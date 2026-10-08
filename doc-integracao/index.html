@@ -1,0 +1,995 @@
+<!doctype html>
+<html lang="pt-BR" data-mode="ia">
+<head>
+<!--
+  JANUS · Guia de integração (HTML estático, sem servidor).
+  LEITORES AUTOMÁTICOS (IA): o conteúdo canônico está em <main id="main"> (texto simples: listas numeradas,
+  tabelas e blocos <pre>). O resumo estruturado dos fluxos está em <script id="janus-flows" type="application/json">.
+  O bloco <style> logo abaixo e o <script> final são só apresentação: pule para <main>.
+  Texto equivalente em Markdown: README.md (esta pasta). Sistema visual: MASTER.md.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Janus · Guia de integração</title>
+<meta name="description" content="Como um produto integra com o Janus, o serviço de identidade JWT: fluxos de login, refresh, convite, magic link, recuperação de senha, erros e checklist.">
+<script>(function(){var m=null;try{m=localStorage.getItem('janus-guia-mode')}catch(e){}document.documentElement.setAttribute('data-mode',m==='ia'?'ia':'dev')})()</script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Janus · guia de integração — tokens vêm do MASTER.md (doc-integracao/MASTER.md). */
+:root{
+  /* Modo IA (padrão e fallback sem JS): pedra clara e tinta */
+  --bg:#EEF0F2; --surface:#FFFFFF; --surface2:#FFFFFF; --line:#C9CED4;
+  --fg:#16181C; --muted:#4A5059; --accent:#80611A; --key:#7A1E2C; --str:#1F6B4A;
+  --ok:#1F6B4A; --err:#A4262C; --btn-bg:#16181C; --btn-fg:#EEF0F2; --btn-line:#16181C; --btn-hover:#2A2D33;
+  --method-bg:#16181C; --method-fg:#EEF0F2; --hero-fade:rgba(238,240,242,0);
+  --f-head:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --h1:26px; --h2:20px; --body:15px; --code:13px; --lh:1.6; --r:2px; --shadow:none;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:64px;--s9:96px;
+  --ease-out:cubic-bezier(.2,.8,.2,1); --t-hover:0ms; --t-step:0ms;
+  --bar:60px; --door-bg:#241B1E; --door-line:#D4AF5A; color-scheme:light;
+}
+:root[data-mode="dev"]{
+  --bg:#0F0C0D; --surface:#1A1416; --surface2:#241B1E; --line:#3A2C30;
+  --fg:#EDE4D3; --muted:#B3A590; --accent:#D4AF5A; --key:#D4AF5A; --str:#8FA7C2;
+  --ok:#8FA7C2; --err:#E07A8A; --btn-bg:#8E2433; --btn-fg:#EDE4D3; --btn-line:#D4AF5A; --btn-hover:#A22A3C;
+  --method-bg:#8E2433; --method-fg:#EDE4D3; --hero-fade:rgba(15,12,13,.94);
+  --f-head:"Cormorant Garamond","Cormorant",Georgia,"Times New Roman",serif;
+  --h1:52px; --h2:34px; --body:16px; --code:13.5px; --lh:1.65; --r:2px;
+  --shadow:0 18px 40px -18px rgba(0,0,0,.8);
+  --t-hover:220ms; --t-step:360ms; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:auto;scroll-padding-top:calc(var(--bar) + 16px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 var(--body)/var(--lh) var(--f-body);-webkit-text-size-adjust:100%}
+a{color:inherit}
+code,pre,kbd{font-family:var(--f-mono)}
+p{margin:0 0 var(--s3)} p:last-child{margin-bottom:0}
+code{font-size:.9em;overflow-wrap:anywhere}
+pre code{overflow-wrap:normal}
+p code,li code,td code,th code{padding:1px 5px;border-radius:2px;background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)}
+.skip{position:absolute;left:-9999px;top:8px;background:var(--btn-bg);color:var(--btn-fg);padding:8px 12px;z-index:100}
+.skip:focus{left:8px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.dev-only{display:none} :root[data-mode="dev"] .dev-only{display:block}
+:root[data-mode="dev"] .ia-only{display:none}
+
+/* barra */
+.bar{position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3) var(--s4);min-height:var(--bar);padding:var(--s2) var(--s4);background:var(--surface);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:var(--s2);font:600 18px/1 var(--f-head);text-decoration:none;letter-spacing:.02em}
+:root[data-mode="dev"] .brand{font-size:26px}
+.brand svg{width:22px;height:22px;flex:0 0 auto;color:var(--accent)}
+.brand small{font:500 11px/1 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.search{flex:1 1 220px;min-width:160px;max-width:380px;position:relative}
+.search input{width:100%;font:400 14px/1 var(--f-body);padding:11px 36px 11px 12px;border-radius:var(--r);background:var(--bg);color:var(--fg);border:1px solid var(--line)}
+.search input:hover{border-color:var(--muted)}
+.search kbd{position:absolute;right:10px;top:50%;transform:translateY(-50%);font:500 11px/1 var(--f-mono);color:var(--muted);border:1px solid var(--line);border-radius:2px;padding:3px 6px}
+.spacer{flex:1 1 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.seg button{font:500 12px/1 var(--f-mono);padding:11px 14px;min-height:44px;background:transparent;color:var(--muted);border:0;cursor:pointer;position:relative}
+.seg button:hover{color:var(--fg)}
+.seg button:active{transform:translateY(1px)}
+.seg button[aria-pressed="true"]{color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.btn{font:600 14px/1 var(--f-body);letter-spacing:.03em;min-height:44px;padding:12px 16px;border-radius:var(--r);border:1px solid var(--btn-line);background:var(--btn-bg);color:var(--btn-fg);cursor:pointer;transition:background-color var(--t-hover) var(--ease-out)}
+.btn:hover{background:var(--btn-hover)} .btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
+.btn.ghost:hover{border-color:var(--accent);background:transparent}
+.btn.sm{min-height:36px;padding:8px 12px;font-size:13px}
+
+/* layout */
+.layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:var(--s6);max-width:1440px;margin:0 auto;padding:var(--s5) var(--s4) var(--s9)}
+.toc{position:sticky;top:calc(var(--bar) + 16px);align-self:start;max-height:calc(100vh - var(--bar) - 32px);overflow:auto;font-size:14px}
+.toc details>summary{list-style:none;cursor:pointer;font:600 11px/1 var(--f-body);letter-spacing:.16em;text-transform:uppercase;color:var(--accent);padding:6px 0}
+.toc details>summary::-webkit-details-marker{display:none}
+.toc ol{list-style:none;margin:var(--s2) 0 0;padding:0;display:grid;gap:2px}
+.toc a{display:block;padding:7px 10px;text-decoration:none;color:var(--muted);border-radius:var(--r);position:relative}
+.toc a:hover{color:var(--fg)}
+.toc a[aria-current="true"]{color:var(--accent);box-shadow:inset 0 0 0 1px var(--line)}
+.toc li.dim a{opacity:.35}
+main{min-width:0;max-width:960px}
+section.doc{margin-top:var(--s8);scroll-margin-top:calc(var(--bar) + 16px)}
+section.doc:first-of-type{margin-top:var(--s6)}
+section.doc.dim{opacity:.35}
+h1,h2,h3,h4{margin:0;text-wrap:balance;font-family:var(--f-head)}
+h1{font-size:var(--h1);line-height:1.05;font-weight:600}
+h2{font-size:var(--h2);line-height:1.12;font-weight:600;margin-bottom:var(--s4);padding-top:var(--s4);border-top:1px solid var(--line);position:relative}
+h2 .num{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.1em;display:block;margin-bottom:var(--s2)}
+h3{font:600 12px/1.3 var(--f-body);letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:var(--s6) 0 var(--s3)}
+h4{font:600 15px/1.3 var(--f-body);margin:var(--s5) 0 var(--s2)}
+.lead{color:var(--muted);max-width:65ch;font-size:calc(var(--body) + 1px)}
+ul,ol.plain{margin:0 0 var(--s3);padding-left:1.2em} li{margin-bottom:var(--s2)}
+a.lnk{text-decoration:none;position:relative;font-weight:500;padding-block:2px;background:linear-gradient(var(--accent),var(--accent)) left bottom/0 1px no-repeat;transition:background-size var(--t-hover) var(--ease-out)}
+:root:not([data-mode="dev"]) a.lnk{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--accent);background:none}
+a.lnk:hover,a.lnk:focus-visible{background-size:100% 1px}
+
+/* hero (Dev) */
+.hero{position:relative;margin:0;overflow:hidden;min-height:340px;border-bottom:1px solid var(--line);isolation:isolate}
+.hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 30%;z-index:-2}
+.hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(15,12,13,.15) 0%,rgba(15,12,13,.55) 55%,var(--hero-fade) 100%)}
+.hero-in{max-width:1440px;margin:0 auto;padding:var(--s8) var(--s4) var(--s6) calc(var(--s4) + 260px + var(--s6));min-height:380px;display:flex;flex-direction:column;justify-content:flex-end;gap:var(--s3)}
+.hero-in>*{max-width:760px}
+.hero .eyebrow{font:600 12px/1 var(--f-body);letter-spacing:.2em;text-transform:uppercase;color:var(--accent)}
+.hero p{max-width:60ch;color:var(--fg)}
+.hero{min-height:380px}
+/* título simples (IA) */
+.introgrid{display:grid;grid-template-columns:minmax(0,1fr) 168px;gap:var(--s5);align-items:start}
+.intro-text{min-width:0}
+.retrato{margin:0;padding:6px;background:var(--surface);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:var(--r)}
+.retrato img{display:block;width:100%;height:auto;border-radius:1px}
+.retrato figcaption{font:500 10.5px/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:6px 2px 2px}
+.titlebar{margin-bottom:var(--s4)}
+.titlebar .eyebrow{font:600 12px/1 var(--f-body);letter-spacing:.2em;text-transform:uppercase;color:var(--accent);display:block;margin-bottom:var(--s2)}
+.titlebar p{margin-top:var(--s3);color:var(--muted);max-width:65ch}
+:root[data-mode="dev"] .titlebar,:root[data-mode="dev"] .retrato{display:none}
+:root[data-mode="dev"] .introgrid{display:block}
+
+.warn{margin:var(--s4) 0;padding:var(--s3) var(--s4);border-radius:var(--r);background:var(--surface2);border:1px solid var(--line);border-top:2px solid var(--accent);font-size:calc(var(--body) - 1px)}
+.warn>b{display:block;font:600 11px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:var(--s2)}
+
+/* código */
+.codewrap{position:relative;margin:var(--s3) 0}
+pre{margin:0;padding:var(--s3) 76px var(--s3) var(--s4);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow-x:auto;font-size:var(--code);line-height:1.55;tab-size:2;color:var(--fg)}
+:root[data-mode="dev"] pre{background:var(--bg)}
+pre code{font-size:inherit}
+pre .k{color:var(--key)} pre .s{color:var(--str)} pre .e{color:var(--err)} pre .c{color:var(--muted)}
+.copy{position:absolute;top:6px;right:6px;font:500 11px/1 var(--f-mono);min-height:30px;padding:6px 10px;border-radius:2px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer;opacity:.85}
+.copy:hover{color:var(--accent);border-color:var(--accent);opacity:1}
+.copy:focus-visible{opacity:1}
+
+/* tabelas */
+.tablewrap{overflow-x:auto;margin:var(--s3) 0}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:calc(var(--body) - 1px);font-variant-numeric:tabular-nums}
+th{font:600 11px/1.3 var(--f-body);letter-spacing:.14em;text-transform:uppercase;text-align:left;padding:var(--s2) var(--s3);color:var(--accent);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:var(--s2) var(--s3);border-bottom:1px solid var(--line);vertical-align:top}
+tr.hide{display:none}
+.m{display:inline-block;font:500 11px/1 var(--f-mono);letter-spacing:.04em;padding:5px 7px;border-radius:2px;background:var(--method-bg);color:var(--method-fg);white-space:nowrap}
+.m.ok{background:transparent;color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)} .m.err{background:transparent;color:var(--err);box-shadow:inset 0 0 0 1px var(--err)}
+.m.loc{background:transparent;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+
+/* fluxos */
+.flowbox{display:grid;gap:var(--s5);margin:var(--s4) 0}
+ol.flow{list-style:none;margin:0;padding:0;counter-reset:st;display:grid;gap:var(--s3);min-width:0}
+li.step{counter-increment:st;position:relative;margin:0;padding:var(--s3) var(--s4) var(--s3) calc(var(--s4) + 34px);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);min-width:0}
+li.step::before{content:counter(st);position:absolute;left:var(--s3);top:var(--s3);width:22px;font:500 12px/1.9 var(--f-mono);color:var(--accent)}
+li.step[data-branch]{border-style:dashed}
+.st-head{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s3);margin-bottom:var(--s2)}
+.st-head code.path{font-size:13.5px;word-break:break-all}
+.actors{font:400 12px/1 var(--f-mono);color:var(--muted)}
+.branch{font:600 10px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;color:var(--err);border:1px solid var(--err);border-radius:2px;padding:3px 6px}
+li.step p{font-size:calc(var(--body) - 1px);color:var(--fg)}
+li.step .codewrap{margin-bottom:0}
+.player{display:none}
+:root[data-mode="dev"] .player{display:block}
+:root[data-mode="dev"] .flowbox{grid-template-columns:minmax(0,1fr) 400px;align-items:start}
+:root[data-mode="dev"] li.step{cursor:pointer;background:var(--surface);box-shadow:inset 0 1px 0 rgba(212,175,90,.12)}
+:root[data-mode="dev"] li.step.is-active{background:var(--surface2);border-color:var(--accent);box-shadow:inset 0 2px 0 var(--accent)}
+.player{position:sticky;top:calc(var(--bar) + 16px);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:var(--s3);box-shadow:var(--shadow)}
+.player svg{width:100%;height:auto;display:block;background:var(--bg);border:1px solid var(--line);border-radius:2px}
+.player .ctl{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:var(--s3);align-items:center}
+.player .ctl .count{font:500 12px/1 var(--f-mono);color:var(--muted);margin-left:auto}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.svg-lane{stroke:var(--line)} .svg-name{fill:var(--accent);font:500 12px var(--f-mono)}
+.svg-arrow{stroke:var(--muted);fill:none;stroke-width:1.2} .svg-arrow.res{stroke-dasharray:5 4}
+.svg-head{fill:var(--muted)}
+.svg-txt{fill:var(--muted);font:400 10.5px var(--f-mono)}
+.svg-n{fill:var(--muted);font:500 10px var(--f-mono)}
+g.act .svg-arrow{stroke:var(--accent);stroke-width:2.2} g.act .svg-head{fill:var(--accent)} g.act .svg-txt,g.act .svg-n{fill:var(--accent)}
+.diagram-ia{display:none}
+
+/* arquitetura */
+.arch{display:none;margin:var(--s4) 0}
+:root[data-mode="dev"] .arch{display:block}
+.arch svg{width:100%;height:auto;display:block;background:var(--bg);border:1px solid var(--line);border-radius:var(--r)}
+.arch .box{fill:var(--surface2);stroke:var(--line)} .arch .t1{fill:var(--accent);font:500 13px var(--f-mono)} .arch .t2{fill:var(--muted);font:400 11px var(--f-mono)}
+.arch .ln{stroke:var(--accent);fill:none;stroke-width:1.4} .arch .hd{fill:var(--accent)}
+.ascii{display:block}
+:root[data-mode="dev"] .ascii{display:none}
+
+/* checklist */
+.checks{list-style:none;padding:0;margin:var(--s3) 0}
+.checks li{display:flex;gap:var(--s3);align-items:flex-start;padding:var(--s3);border:1px solid var(--line);border-radius:var(--r);background:var(--surface);margin-bottom:var(--s2)}
+.checks input{width:20px;height:20px;margin:2px 0 0;flex:0 0 auto;accent-color:var(--accent);cursor:pointer}
+.checks label{cursor:pointer;min-width:0}
+.checks li.done label{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--accent)}
+.progress{font:500 12px/1 var(--f-mono);color:var(--muted);margin:var(--s2) 0}
+.tools{display:flex;flex-wrap:wrap;gap:var(--s3);align-items:center;margin:var(--s3) 0}
+.tools input[type=search]{flex:1 1 220px;max-width:340px;font:400 14px/1 var(--f-body);padding:11px 12px;border-radius:var(--r);background:var(--bg);color:var(--fg);border:1px solid var(--line)}
+.tools label.chip{display:inline-flex;gap:var(--s2);align-items:center;font:500 12px/1 var(--f-mono);color:var(--muted);cursor:pointer;min-height:44px}
+footer{max-width:1360px;margin:0 auto;padding:var(--s6) var(--s4) var(--s8);border-top:1px solid var(--line);color:var(--muted);font-size:14px;display:flex;flex-wrap:wrap;gap:var(--s3) var(--s5)}
+
+/* porta (troca de modo) */
+.door{position:fixed;top:0;bottom:0;width:50%;z-index:50;background:var(--door-bg);border:1px solid var(--door-line);pointer-events:none;display:none}
+.door.l{left:0} .door.r{right:0}
+dialog{max-width:min(720px,92vw);width:100%;background:var(--surface);color:var(--fg);border:1px solid var(--accent);border-radius:var(--r);padding:var(--s4)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog textarea{width:100%;height:46vh;font:400 12px/1.5 var(--f-mono);background:var(--bg);color:var(--fg);border:1px solid var(--line);padding:var(--s3)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--surface2);color:var(--fg);border:1px solid var(--accent);padding:10px 16px;border-radius:2px;font:500 13px var(--f-mono);z-index:60}
+
+@media (max-width:980px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .toc{position:static;max-height:none;border:1px solid var(--line);border-radius:var(--r);padding:var(--s2) var(--s3);background:var(--surface)}
+  .hero-in{padding-left:var(--s4)}
+  .introgrid{grid-template-columns:minmax(0,1fr) 120px;gap:var(--s4)}
+  :root[data-mode="dev"] .flowbox{grid-template-columns:minmax(0,1fr)}
+  .player{position:static;order:-1}
+}
+@media (max-width:640px){
+  .introgrid{grid-template-columns:minmax(0,1fr)}
+  .retrato{order:-1;width:132px}
+  :root[data-mode="dev"]{--h1:38px;--h2:28px}
+  .bar{padding-inline:var(--s4)} .search{order:5;flex-basis:100%;max-width:none}
+  li.step{padding-left:calc(var(--s3) + 30px)}
+  .btn.hide-sm{display:none}
+}
+
+/* ---- acabamento do Modo IA (sem movimento) ---- */
+:root:not([data-mode="dev"]) h2{border-top:1px solid var(--line)}
+:root:not([data-mode="dev"]) h2::before{content:"";position:absolute;left:0;top:-2px;width:44px;height:3px;background:var(--accent)}
+:root:not([data-mode="dev"]) .titlebar h1{font-size:30px;letter-spacing:-.01em}
+:root:not([data-mode="dev"]) .titlebar p{font-size:16px}
+:root:not([data-mode="dev"]) li.step{border-radius:3px}
+:root:not([data-mode="dev"]) li.step::before{left:var(--s3);top:var(--s3);width:22px;height:22px;line-height:20px;text-align:center;border:1px solid var(--line);border-radius:2px;background:var(--bg);color:var(--fg);font-weight:600}
+:root:not([data-mode="dev"]) .st-head{padding-bottom:var(--s2);border-bottom:1px solid var(--line);margin-bottom:var(--s3)}
+:root:not([data-mode="dev"]) pre[data-kind]::before{content:attr(data-kind);display:block;font:600 10px/1 var(--f-body);letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:var(--s2)}
+:root:not([data-mode="dev"]) thead th{background:color-mix(in srgb,var(--fg) 5%,transparent)}
+:root:not([data-mode="dev"]) tbody tr:hover td{background:color-mix(in srgb,var(--fg) 3%,transparent)}
+:root:not([data-mode="dev"]) .toc a[aria-current="true"]{background:var(--surface);box-shadow:inset 0 0 0 1px var(--line),inset 0 -2px 0 var(--accent)}
+:root:not([data-mode="dev"]) .warn{background:var(--surface)}
+.arch-ia{display:flex;align-items:stretch;gap:0;margin:var(--s4) 0}
+:root[data-mode="dev"] .arch-ia{display:none}
+.arch-ia .node{flex:1 1 0;min-width:0;padding:var(--s3) var(--s4);background:var(--surface);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:var(--r);display:flex;flex-direction:column;gap:2px;justify-content:center}
+.arch-ia .node b{font:600 14px/1.3 var(--f-body)}
+.arch-ia .node small{font:400 12px/1.4 var(--f-mono);color:var(--muted)}
+.arch-ia .edge{flex:0 0 74px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.arch-ia .edge span{font:500 11px/1 var(--f-mono);color:var(--muted);letter-spacing:.06em}
+.arch-ia .edge i{display:block;position:relative;width:100%;height:1px;background:var(--fg)}
+.arch-ia .edge i::after{content:"";position:absolute;right:-1px;top:-4px;border:4px solid transparent;border-left:7px solid var(--fg);border-right:0}
+@media (max-width:640px){
+  .arch-ia{flex-direction:column}
+  .arch-ia .edge{flex:0 0 46px;flex-direction:row;gap:var(--s2)}
+  .arch-ia .edge i{width:1px;height:26px}
+  .arch-ia .edge i::after{right:auto;left:-4px;top:auto;bottom:-1px;border:4px solid transparent;border-top:7px solid var(--fg);border-bottom:0}
+}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{transition:none !important;animation:none !important;scroll-behavior:auto !important}}
+
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<header class="bar">
+  <a class="brand" href="#topo" aria-label="Janus, início"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M21 12v3"/></svg><span>Janus</span><small>guia de integração</small></a>
+  <div class="search"><input id="q" type="search" placeholder="Buscar no guia" aria-label="Buscar no guia" autocomplete="off"><kbd aria-hidden="true">/</kbd></div>
+  <span id="qstat" class="sr" aria-live="polite"></span>
+  <span class="spacer"></span>
+  <div class="seg" role="group" aria-label="Modo de leitura"><button type="button" data-mode="dev" aria-pressed="true">Dev</button><button type="button" data-mode="ia" aria-pressed="false">IA</button></div>
+  <button type="button" class="btn ghost hide-sm" data-act="copy-ai">Copiar contexto para IA</button>
+</header>
+<div class="door l" id="doorL" aria-hidden="true"></div><div class="door r" id="doorR" aria-hidden="true"></div>
+<div class="hero dev-only"><img src="assets/janus-cover.jpg" alt="Janus, deus romano das portas, com duas faces, segurando uma chave e um cetro" width="1168" height="784"><div class="hero-in"><span class="eyebrow">Janus · guia de integração</span><h1>Integrando um produto com o Janus</h1><p>Como o seu front e o seu backend falam com o serviço de identidade: login, refresh, convite, magic link e recuperação de senha, com os fluxos passo a passo.</p></div></div>
+<div class="layout" id="topo">
+<nav class="toc" aria-label="Índice"><details open><summary>Índice</summary><ol><li><a href="#arquitetura">1. Arquitetura da integração</a></li><li><a href="#config">2. Configuração e segredos</a></li><li><a href="#auth">3. Autenticação (login, refresh, logout, /me)</a></li><li><a href="#validar-jwt">4. Validar o JWT no seu backend (sem round-trip)</a></li><li><a href="#roles">5. Roles: como o produto mapeia identidade → papel</a></li><li><a href="#usuarios">6. CRUD de usuários (service key)</a></li><li><a href="#convite">7. Convite por magic link</a></li><li><a href="#magic-link">8. Magic link de login (usuário já existente)</a></li><li><a href="#recuperacao">9. Recuperação de senha</a></li><li><a href="#2fa">10. 2FA (opcional)</a></li><li><a href="#erros">11. Erros, rate limit e lockout</a></li><li><a href="#checklist">12. Checklist de integração</a></li><li><a href="#endpoints">Referência rápida de endpoints do Janus</a></li></ol></details></nav>
+<main id="main">
+  
+  <section class="doc" id="intro" style="margin-top:32px"><div class="introgrid"><div class="intro-text"><div class="titlebar"><div class="tb-text"><span class="eyebrow">Janus · guia de integração</span><h1>Integrando um produto com o Janus</h1><p>Guia completo de como qualquer produto (front + back próprios) integra com o <strong>Janus</strong> (<code>../janus</code>) — o serviço de identidade JWT deste workspace.</p></div></div>
+    <h2 style="border-top:0;padding-top:0" class="sr">Introdução</h2>
+    <p>Documenta exatamente o padrão usado na integração de referência <strong>crazy-back + crazy-front</strong> (<code>../crazy-back</code>, <code>../crazy-front</code>), com endpoints, payloads reais e trechos de código.</p>
+    <div class="warn"><b>Regra de ouro do Janus</b>O Janus só prova identidade (<code>sub</code> = UUID do usuário) e emite JWT. <strong>Não tem roles, não tem RBAC, não redireciona nada.</strong> Papéis, permissões e qualquer dado de produto vivem <strong>no seu backend</strong>, nunca aqui. Ver <code>../janus/AUTH-MVP.md</code> §1 para o contrato de produto completo.</div>
+    <p class="lead dev-only">Dois modos de leitura: <strong>Dev</strong> (imersivo, com o diagrama de cada fluxo) e <strong>IA</strong> (ficha densa, o mesmo texto sem enfeite). Use <strong>Copiar contexto para IA</strong> para levar o guia inteiro como Markdown.</p>
+    </div><figure class="retrato"><img src="assets/janus-retrato.jpg" alt="Retrato do Janus, deus romano das portas: duas faces, coroa de louro, uma chave na mão e um cetro, diante de um portal luminoso" width="260" height="387" loading="lazy"><figcaption>Janus · deus das portas</figcaption></figure></div>
+  </section>
+<section class="doc" id="arquitetura"><h2>1. Arquitetura da integração</h2><div class="arch-ia" role="group" aria-label="Fluxo: seu frontend, seu backend, Janus"><div class="node"><b>seu frontend</b><small>(browser)</small></div><div class="edge" aria-hidden="true"><span>API</span><i></i></div><div class="node"><b>seu backend</b><small>guarda roles e dados de produto</small></div><div class="edge" aria-hidden="true"><span>HTTP</span><i></i></div><div class="node"><b>Janus</b><small>identidade + JWT</small></div></div><div class="arch" aria-hidden="true"><svg viewBox="0 0 760 170">
+<rect class="box" x="10" y="30" width="190" height="110" rx="2"/><text class="t1" x="105" y="70" text-anchor="middle">seu frontend</text><text class="t2" x="105" y="92" text-anchor="middle">(browser)</text><text class="t2" x="105" y="118" text-anchor="middle">só chama /api/*</text>
+<rect class="box" x="285" y="30" width="190" height="110" rx="2"/><text class="t1" x="380" y="70" text-anchor="middle">seu backend</text><text class="t2" x="380" y="92" text-anchor="middle">roles + dados de produto</text><text class="t2" x="380" y="118" text-anchor="middle">guarda a service key</text>
+<rect class="box" x="560" y="30" width="190" height="110" rx="2"/><text class="t1" x="655" y="70" text-anchor="middle">Janus</text><text class="t2" x="655" y="92" text-anchor="middle">identidade + JWT</text><text class="t2" x="655" y="118" text-anchor="middle">nenhuma role</text>
+<line class="ln" x1="202" y1="72" x2="283" y2="72"/><polygon class="hd" points="283,72 274,68 274,76"/>
+<line class="ln" x1="283" y1="104" x2="204" y2="104" stroke-dasharray="5 4"/><polygon class="hd" points="204,104 213,100 213,108"/>
+<line class="ln" x1="477" y1="72" x2="558" y2="72"/><polygon class="hd" points="558,72 549,68 549,76"/>
+<line class="ln" x1="558" y1="104" x2="479" y2="104" stroke-dasharray="5 4"/><polygon class="hd" points="479,104 488,100 488,108"/>
+<text class="t2" x="242" y="62" text-anchor="middle">API</text><text class="t2" x="518" y="62" text-anchor="middle">HTTP</text></svg></div><p><strong>Regra central: o frontend nunca fala com o Janus diretamente.</strong> Ele fala só com o seu próprio backend, que é quem:</p><ul><li>repassa login/refresh/logout para o Janus;</li><li>guarda a <strong>service key</strong> do Janus (ela nunca chega ao browser);</li><li>guarda <strong>roles e qualquer dado de produto</strong> numa tabela local, indexada pelo <code>sub</code> (UUID) do usuário;</li><li>valida o JWT localmente (sem chamar o Janus a cada request — ver <a class="lnk" href="#validar-jwt">§4</a>).</li></ul><p>É exatamente assim que o <code>crazy-back</code> está montado:</p><div class="tablewrap"><table><thead><tr><th>Peça</th><th>Onde</th><th>Papel</th></tr></thead><tbody><tr><td><code>crazy-front</code></td><td><code>../crazy-front</code></td><td>só chama <code>/api/*</code> do <code>crazy-back</code></td></tr><tr><td><code>crazy-back</code></td><td><code>../crazy-back</code></td><td>chama o Janus, guarda <code>Profile{role}</code> local</td></tr><tr><td><code>janus</code></td><td><code>../janus</code></td><td>identidade + JWT, nenhuma role</td></tr></tbody></table></div></section><section class="doc" id="config"><h2>2. Configuração e segredos</h2><p>Seu backend precisa de três variáveis (ver <code>crazy-back/internal/config/config.go</code>):</p><div class="tablewrap"><table><thead><tr><th>Variável</th><th>Exemplo</th><th>Uso</th></tr></thead><tbody><tr><td><code>JWT_SECRET</code></td><td>mesmo valor do Janus</td><td>validar o JWT localmente (HS256)</td></tr><tr><td><code>JANUS_URL</code></td><td><code>http://localhost:8080</code></td><td>base URL para as chamadas HTTP</td></tr><tr><td><code>JANUS_SERVICE_KEY</code></td><td>uma das <code>SERVICE_KEYS</code> do Janus</td><td>CRUD de usuários e invites</td></tr></tbody></table></div><p>O Janus precisa ter, no seu próprio <code>.env</code>/ambiente:</p><pre><code><span class="k">JWT_SECRET</span>=&lt;mesmo segredo usado acima — 45+ chars&gt;
+<span class="k">SERVICE_KEYS</span>=chave-do-seu-produto-45+chars,chave-anterior-para-rotacao-45+chars</code></pre><p><strong>Mínimo de 45 caracteres</strong> para o <code>JWT_SECRET</code> e <strong>para cada</strong> chave de <code>SERVICE_KEYS</code>: sem <code>DEV_ENV=true</code>, o Janus recusa iniciar com segredo menor (e com <code>SERVICE_KEYS</code> vazio). Gere com <code>openssl rand -base64 48</code>. Como o <code>JWT_SECRET</code> do seu backend precisa ser idêntico ao do Janus, use o mesmo valor longo nos dois. <code>DEV_ENV=true</code> desliga essa validação e serve <strong>só para teste local</strong> (o <code>docker-compose.yml</code> e o <code>.env.example</code> deste workspace já o ligam); nunca em produção.</p><p>O <code>crazy-back</code> aplica a mesma regra ao próprio ambiente (<code>crazy-back/internal/config/config.go:Validate</code>, chamado no <code>main.go</code>): sem <code>DEV_ENV=true</code>, ele não inicia se <code>JWT_SECRET</code> ou <code>JANUS_SERVICE_KEY</code> tiverem menos de 45 caracteres. Faça o mesmo no seu backend.</p><p><code>SERVICE_KEYS</code> é uma lista (rotação sem downtime): mantenha pelo menos duas ativas. Nunca gere uma service key própria fora dessa env — o Janus valida por comparação de tempo constante contra essa lista (<code>internal/middleware/auth.go</code> do Janus, <code>ServiceKeyAuth()</code>).</p></section><section class="doc" id="auth"><h2>3. Autenticação (login, refresh, logout, /me)</h2><p>Seu backend expõe endpoints próprios que <strong>fazem proxy</strong> para o Janus. Referência: <code>crazy-back/features/auth/handler.go</code>.</p><h3 id="login">Login</h3><div class="flowbox"><ol class="flow" data-flow="login" aria-label="Login"><li class="step" data-step="1" data-from="browser" data-to="back" data-method="POST" data-path="/api/auth/login" data-kind="request"><div class="st-head"><span class="m">POST</span><code class="path">/api/auth/login</code><span class="actors">Navegador → Seu backend</span></div><p>O frontend manda e-mail e senha para o seu backend. Ele nunca fala com o Janus.</p><pre data-kind="request"><code>{ <span class="k">"email"</span>: <span class="s">"user@example.com"</span>, <span class="k">"password"</span>: <span class="s">"senha123"</span> }</code></pre></li><li class="step" data-step="2" data-from="back" data-to="janus" data-method="POST" data-path="/v1/auth/login" data-kind="request" data-short="/v1/auth/login"><div class="st-head"><span class="m">POST</span><code class="path">/v1/auth/login</code><span class="actors">Seu backend → Janus</span></div><p>Seu backend repassa <code>email</code>/<code>password</code> ao Janus (sem auth). Payload igual ao contrato do Janus.</p></li><li class="step" data-step="3" data-from="janus" data-to="back" data-method="200" data-path="" data-kind="response" data-short="tokens" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Janus → Seu backend</span></div><p>O Janus responde com o par de tokens.</p><pre data-kind="response"><code>{
+  <span class="k">"access_token"</span>: <span class="s">"eyJ..."</span>,
+  <span class="k">"refresh_token"</span>: <span class="s">"a1b2c3..."</span>,
+  <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>,
+  <span class="k">"expires_in"</span>: 900
+}</code></pre></li><li class="step" data-step="4" data-from="back" data-to="back" data-method="sub" data-path="" data-kind="local" data-short="extrai sub"><div class="st-head"><span class="m loc">sub</span><span class="actors">em Seu backend</span></div><p>Extrai o <code>sub</code> do <code>access_token</code> (mesmo segredo, dá para decodificar sem round-trip — ver <code>crazy-back/features/auth/handler.go:subjectOf</code>).</p></li><li class="step" data-step="5" data-from="back" data-to="back" data-method="Profile" data-path="" data-kind="local" data-short="busca Profile"><div class="st-head"><span class="m loc">Profile</span><span class="actors">em Seu backend</span></div><p>Busca o registro local (<code>Profile</code>) por esse <code>sub</code> para pegar a <code>role</code>.</p></li><li class="step" data-step="6" data-from="back" data-to="browser" data-method="200" data-path="" data-kind="response" data-short="tokens + user" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Seu backend → Navegador</span></div><p>Devolve os tokens <strong>mais</strong> os dados de produto (role, etc.).</p><pre data-kind="response"><code>{
+  <span class="k">"access_token"</span>: <span class="s">"eyJ..."</span>,
+  <span class="k">"refresh_token"</span>: <span class="s">"a1b2c3..."</span>,
+  <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>,
+  <span class="k">"expires_in"</span>: 900,
+  <span class="k">"user"</span>: { <span class="k">"id"</span>: <span class="s">"&lt;uuid&gt;"</span>, <span class="k">"email"</span>: <span class="s">"..."</span>, <span class="k">"nome"</span>: <span class="s">"..."</span>, <span class="k">"role"</span>: <span class="s">"admin"</span> }
+}</code></pre></li><li class="step" data-step="7" data-from="back" data-to="browser" data-method="401" data-path="" data-kind="response" data-short="invalid credentials" data-status="401" data-branch="falha"><div class="st-head"><span class="m err">401</span><span class="actors">Seu backend → Navegador</span><span class="branch">falha</span></div><p>Toda falha de login devolve exatamente isto (ver abaixo): usuário inexistente, sem senha, senha errada, conta desabilitada ou <code>Profile</code> local inativo/ausente.</p><pre data-kind="response"><code>{ <span class="k">"error"</span>: <span class="s">"invalid credentials"</span> }</code></pre></li><li class="step" data-step="8" data-from="back" data-to="browser" data-method="429" data-path="" data-kind="response" data-short="locked" data-status="429" data-branch="lockout"><div class="st-head"><span class="m err">429</span><span class="actors">Seu backend → Navegador</span><span class="branch">lockout</span></div><p>Lockout de conta: o proxy repassa status e corpo como vieram do Janus.</p><pre data-kind="response"><code>{ <span class="k">"error"</span>: <span class="s">"account temporarily locked"</span> }</code></pre></li></ol></div><p>Se <code>2fa_enabled</code> estiver ligado para o usuário, o Janus responde diferente (sem tokens ainda) — ver <a class="lnk" href="#2fa">§10</a>.</p><div class="warn"><b>Falha de autenticação é uma só</b>Usuário inexistente, usuário sem senha (convite não aceito), senha errada e <strong>conta desabilitada</strong> respondem todos <code>401 {"error":"invalid credentials"}</code> — mesmo status, mesmo código, mesmo corpo, mesmo custo de tempo (sempre um bcrypt). <strong>Não existe <code>account disabled</code> na resposta de login.</strong></div><p>Consequências para o seu produto:</p><ul><li>Seu backend <strong>não pode</strong> criar uma resposta diferente para "conta desativada". Se o <code>Profile</code> local estiver <code>Active=false</code> depois de uma senha certa, devolva o mesmo <code>401 {"error":"invalid credentials"}</code> (é o que <code>crazy-back/features/auth/handler.go</code> faz) — nunca <code>account disabled</code>, <code>403</code> ou outro texto. O mesmo vale para "senha certa mas sem <code>Profile</code> local": também <code>401 invalid credentials</code>, nunca <code>403</code>, para não confirmar que a senha estava certa.</li><li>Não mostre no front mensagens que separem os casos; "E-mail ou senha incorretos" serve para todos. Avisos de desativação vão por e-mail/suporte, não pelo login.</li><li>Senha errada conta no lockout (inclusive para conta desabilitada, e para e-mail inexistente — o <code>429 account temporarily locked</code> não revela se o e-mail existe). Senha certa em conta desabilitada não emite token e não mexe no lockout.</li><li>O refresh de usuário desabilitado responde <code>401 invalid refresh token</code> (antes: <code>account disabled</code>).</li></ul><p>Contrato original: <code>janus/AUTH-MVP.md</code> §7, "Login — falha de autenticação é uma só".</p><h3>Refresh</h3><div class="flowbox"><ol class="flow" data-flow="refresh" aria-label="Refresh"><li class="step" data-step="1" data-from="browser" data-to="back" data-method="POST" data-path="/api/auth/refresh" data-kind="request"><div class="st-head"><span class="m">POST</span><code class="path">/api/auth/refresh</code><span class="actors">Navegador → Seu backend</span></div><pre data-kind="request"><code>{ <span class="k">"refresh_token"</span>: <span class="s">"a1b2c3..."</span> }</code></pre></li><li class="step" data-step="2" data-from="back" data-to="janus" data-method="POST" data-path="/v1/auth/refresh" data-kind="request" data-short="/v1/auth/refresh"><div class="st-head"><span class="m">POST</span><code class="path">/v1/auth/refresh</code><span class="actors">Seu backend → Janus</span></div><p>Repasse 1:1, sem lógica extra.</p></li><li class="step" data-step="3" data-from="janus" data-to="back" data-method="200" data-path="" data-kind="response" data-short="novo par" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Janus → Seu backend</span></div><p>Novo par <code>access_token</code>/<code>refresh_token</code> (rotação automática — o antigo é invalidado). Reapresentá-lo depois disso é tratado como reuse e revoga a família inteira de refresh tokens daquele usuário.</p><pre data-kind="response"><code>{
+  <span class="k">"access_token"</span>: <span class="s">"eyJ..."</span>,
+  <span class="k">"refresh_token"</span>: <span class="s">"a1b2c3..."</span>,
+  <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>,
+  <span class="k">"expires_in"</span>: 900
+}</code></pre></li><li class="step" data-step="4" data-from="back" data-to="browser" data-method="200" data-path="" data-kind="response" data-short="novo par" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Seu backend → Navegador</span></div><p>Seu backend devolve o novo par ao frontend.</p></li><li class="step" data-step="5" data-from="back" data-to="browser" data-method="401" data-path="" data-kind="response" data-short="invalid refresh" data-status="401" data-branch="falha"><div class="st-head"><span class="m err">401</span><span class="actors">Seu backend → Navegador</span><span class="branch">falha</span></div><p>Refresh inválido, expirado, reutilizado ou de usuário desabilitado.</p><pre data-kind="response"><code>{ <span class="k">"error"</span>: <span class="s">"invalid refresh token"</span> }</code></pre></li></ol></div><h3>Logout</h3><div class="flowbox"><ol class="flow" data-flow="logout" aria-label="Logout"><li class="step" data-step="1" data-from="browser" data-to="back" data-method="POST" data-path="/api/auth/logout" data-kind="request"><div class="st-head"><span class="m">POST</span><code class="path">/api/auth/logout</code><span class="actors">Navegador → Seu backend</span></div><p>Com <code>Authorization: Bearer &lt;access_token&gt;</code>.</p></li><li class="step" data-step="2" data-from="back" data-to="janus" data-method="POST" data-path="/v1/auth/logout" data-kind="request" data-short="/v1/auth/logout"><div class="st-head"><span class="m">POST</span><code class="path">/v1/auth/logout</code><span class="actors">Seu backend → Janus</span></div><p>Repasse o header <code>Authorization</code> recebido do seu próprio front direto para o Janus. Revoga os refresh tokens do usuário.</p></li></ol></div><h3>/me (identidade pura, sem role)</h3><pre><code>GET /v1/me   (Bearer access_token)</code></pre><pre data-kind="response"><code>{ <span class="k">"id"</span>: <span class="s">"&lt;uuid&gt;"</span>, <span class="k">"email"</span>: <span class="s">"..."</span>, <span class="k">"nome"</span>: <span class="s">"..."</span>, <span class="k">"2fa_enabled"</span>: false }</code></pre><p>Isso é <strong>só identidade</strong>. Se seu produto quer expor <code>/api/auth/me</code> para o frontend com a <code>role</code> junto, monte a resposta você mesmo a partir do <code>Profile</code> local (não precisa nem chamar <code>/v1/me</code> de novo — o middleware do seu backend já validou o JWT e sabe o <code>sub</code>).</p></section><section class="doc" id="validar-jwt"><h2>4. Validar o JWT no seu backend (sem round-trip)</h2><p><strong>Não chame o Janus a cada request autenticado.</strong> O JWT é HS256 assinado com <code>JWT_SECRET</code> — se seu backend tem o mesmo segredo, valida localmente. Isso é o que faz <code>crazy-back/internal/middleware/auth.go</code>:</p><pre><code>token, err := jwt.ParseWithClaims(tokenString, &amp;Claims{}, func(token *jwt.Token) (interface{}, error) {
+    if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+        return nil, jwt.ErrSignatureInvalid
+    }
+    return []byte(cfg.JWTSecret), nil
+})
+<span class="c">// claims.Subject == o UUID do usuário (o "sub" do JWT)</span></code></pre><p>Claims do access token (fechado, não muda — ver <code>AUTH-MVP.md</code> §3):</p><div class="tablewrap"><table><thead><tr><th>Claim</th><th>Sempre presente</th><th>Notas</th></tr></thead><tbody><tr><td><code>sub</code></td><td>sim</td><td>UUID do usuário — é a sua chave para tudo</td></tr><tr><td><code>iat</code>/<code>exp</code></td><td>sim</td><td>access token dura 15 min (<code>ACCESS_TOKEN_TTL</code>)</td></tr><tr><td><code>jti</code></td><td>sim</td><td>id do access, para revoke pontual (raramente usado)</td></tr><tr><td><code>2fa_verified</code></td><td>sim</td><td><code>true</code> se 2FA off ou já verificado</td></tr></tbody></table></div><p><strong>Nunca existe <code>roles</code> ou <code>tenant</code> no token.</strong> Depois de validar a assinatura, busque a role no seu banco pelo <code>sub</code> — nunca confie em nada além do <code>sub</code> vindo do token.</p><p>Depois de decodificar, seu middleware busca o registro local e injeta no contexto do request (<code>crazy-back/internal/middleware/auth.go:JWTAuth</code>):</p><pre><code>var profile models.Profile
+db.DB().First(&amp;profile, "id = ?", claims.Subject)
+if !profile.Active { <span class="c">/* 401 {"error":"invalid token"} — usuário desativado no SEU produto */</span> }
+c.Set("user_id", profile.ID)
+c.Set("role", profile.Role)</code></pre><p>(Use uma mensagem genérica — <code>invalid token</code> — e não <code>account disabled</code>: ver <a class="lnk" href="#login">§3, "Falha de autenticação é uma só"</a>.)</p><p>Um middleware <code>RequireAdmin()</code> (ou equivalente) simplesmente checa <code>c.Get("role") == "admin"</code> — de novo, tudo local, zero chamada ao Janus.</p></section><section class="doc" id="roles"><h2>5. Roles: como o produto mapeia identidade → papel</h2><p>Modelo de referência (<code>crazy-back/internal/models/models.go</code>):</p><pre><code>type Profile struct {
+    ID     string <span class="c">// == sub do JWT == users.id do Janus</span>
+    Email  string
+    Nome   string
+    Role   string <span class="c">// "admin" | "user" — só existe no SEU banco</span>
+    Active bool   <span class="c">// soft-disable local, independente do disabled_at do Janus</span>
+}</code></pre><p>Regras:</p><ul><li><strong>O <code>id</code> do <code>Profile</code> é sempre o mesmo UUID que o Janus usa.</strong> Nunca gere um id próprio — isso quebraria a correlação com o JWT.</li><li>Toda vez que você cria um usuário (via CRUD ou invite), crie o <code>Profile</code> local <strong>na mesma operação</strong>, com a role escolhida.</li><li>Toda vez que você desativa um usuário no seu produto, desative também no Janus (<code>PATCH /v1/users/:id {"disabled_at": "..."}</code>) — senão o usuário continua conseguindo logar (identidade) mesmo estando "removido" no seu produto.</li></ul></section><section class="doc" id="usuarios"><h2>6. CRUD de usuários (service key)</h2><p>Só o <strong>seu backend</strong> chama isso — nunca o frontend, nunca com um JWT de usuário. Header sempre <code>Authorization: Bearer &lt;service_key&gt;</code>.</p><h3>Criar usuário</h3><pre><code>POST /v1/users
+Authorization: Bearer &lt;service_key&gt;</code></pre><pre data-kind="request"><code>{ <span class="k">"email"</span>: <span class="s">"user@example.com"</span>, <span class="k">"nome"</span>: <span class="s">"Nome"</span>, <span class="k">"password"</span>: <span class="s">"senha123"</span>, <span class="k">"telefone"</span>: <span class="s">"opcional"</span>, <span class="k">"cpf"</span>: <span class="s">"opcional"</span> }</code></pre><p><code>nome</code> é obrigatório e <strong>aparado</strong> (<code>TrimSpace</code>): vazio ou só espaços → <code>400</code>, e o valor gravado não tem espaços nas pontas. A mesma regra vale no <code>PATCH /v1/users/:id</code> (abaixo) e no endpoint de criação do seu próprio backend — valide/apare lá também, antes de chamar o Janus (<code>crazy-back/features/admin/handler.go:CreateUser</code> faz isso).</p><p><code>password</code> é opcional aqui — sem ela o usuário fica sem <code>password_hash</code> (útil para o fluxo de invite: cria-se o usuário sem senha, e só o accept do invite define a senha). Resposta <code>201</code>:</p><pre data-kind="response"><code>{ <span class="k">"id"</span>: <span class="s">"&lt;uuid&gt;"</span>, <span class="k">"email"</span>: <span class="s">"..."</span>, <span class="k">"nome"</span>: <span class="s">"..."</span>, <span class="k">"created_at"</span>: <span class="s">"..."</span> }</code></pre><p>Depois disso, seu backend cria o <code>Profile</code> local com a role e qualquer dado inicial de produto (<code>crazy-back/features/admin/handler.go:CreateUser</code>).</p><h3>Listar / buscar por e-mail</h3><pre><code>GET /v1/users?page=1     # lista paginada (100 por página; usada para idempotência)
+GET /v1/users/:id</code></pre><p>A listagem é <strong>paginada, 100 usuários por página</strong>, ordenada do mais recente para o mais antigo. <code>page</code> começa em 1 (padrão); <code>page</code> inválido (<code>0</code>, negativo, não numérico) → <code>400</code>. Uma página além da última volta vazia (<code>users: []</code>).</p><pre data-kind="response"><code>{
+  <span class="k">"users"</span>: [ { <span class="k">"id"</span>: <span class="s">"..."</span>, <span class="k">"email"</span>: <span class="s">"..."</span>, <span class="k">"nome"</span>: <span class="s">"..."</span> } ],
+  <span class="k">"page"</span>: 1,
+  <span class="k">"page_size"</span>: 100,
+  <span class="k">"total"</span>: 250,
+  <span class="k">"total_pages"</span>: 3
+}</code></pre><p>O Janus <strong>não tem busca por e-mail</strong>: para achar um usuário pelo e-mail, percorra as páginas até <code>page &gt;= total_pages</code> comparando o campo <code>email</code> (veja <code>crazy-back/internal/janus/client.go:FindUserByEmail</code>). Quem lê só a primeira página enxerga apenas as 100 contas mais recentes.</p><h3>Atualizar / desativar (soft-delete)</h3><pre><code>PATCH /v1/users/:id
+Authorization: Bearer &lt;service_key&gt;</code></pre><pre data-kind="request"><code>{ <span class="k">"disabled_at"</span>: <span class="s">"2026-09-17T00:00:00Z"</span> }</code></pre><p>Desativa a identidade — <strong>não existe DELETE</strong>, é sempre soft-disable. Para reativar, mande <code>{"disabled_at": ""}</code>. O mesmo endpoint também aceita atualizar <code>email</code>, <code>nome</code>, <code>telefone</code>, <code>cpf</code> (todos opcionais, manda só o que for mudar). Se mandar <code>nome</code>, ele é aparado e não pode ficar vazio (<code>400</code>).</p><h3>Trocar e-mail de outro usuário</h3><pre data-kind="request"><code>{ <span class="k">"email"</span>: <span class="s">"novo@example.com"</span> }</code></pre><ul><li>E-mail já usado por outra conta → <code>409</code>.</li><li><strong>Trocar o e-mail revoga todos os refresh tokens do usuário</strong> (mesma revogação do bloqueio). Ele precisa logar de novo com o e-mail novo. Os demais campos (<code>nome</code>, <code>telefone</code>, <code>cpf</code>) <strong>não</strong> revogam nada.</li></ul><h3>Bloqueio por segurança (encerrar as sessões de um usuário)</h3><p>Não existe endpoint "só revogar sessões": o bloqueio <strong>é</strong> o mecanismo. Use quando suspeitar de conta comprometida, fraude ou quando for preciso derrubar alguém já.</p><pre><code>PATCH /v1/users/:id
+Authorization: Bearer &lt;service_key&gt;</code></pre><pre data-kind="request"><code>{ <span class="k">"disabled_at"</span>: <span class="s">"2026-09-17T00:00:00Z"</span> }</code></pre><p>Qualquer valor não vazio bloqueia; o Janus grava o horário atual do servidor. O que acontece <strong>na hora</strong>:</p><ol class="plain"><li>Todos os refresh tokens ainda ativos do usuário (todos os dispositivos) são revogados.</li><li><code>login</code>, <code>refresh</code> e <code>magic-link/consume</code> passam a ser recusados para a conta (login com senha correta também não emite token).</li></ol><div class="warn"><b>Limitação conhecida do Janus — leia</b>Access tokens já emitidos <strong>continuam válidos até expirar</strong> (<code>ACCESS_TOKEN_TTL</code>, padrão 15 min). O middleware do Janus valida só assinatura/expiração e <strong>não</strong> consulta <code>disabled_at</code> a cada request: a revogação impede apenas a <em>renovação</em> da sessão. Para corte <strong>imediato</strong>, bloqueie no Janus <strong>e</strong> marque o <code>Profile</code> local como inativo (<code>Active=false</code>), checando isso no seu próprio middleware a cada request, como o <code>crazy-back</code> faz.</div><p>Reverter: <code>{"disabled_at": ""}</code> reativa a conta, mas os refresh tokens revogados <strong>não</strong> voltam; o usuário faz login novamente.</p><div class="tablewrap"><table><thead><tr><th>Ação (<code>PATCH /v1/users/:id</code>)</th><th>Revoga refresh tokens</th><th>Bloqueia login</th><th>Access token vigente</th></tr></thead><tbody><tr><td><code>disabled_at</code> preenchido</td><td>sim</td><td>sim</td><td>vale até expirar</td></tr><tr><td><code>email</code> alterado</td><td>sim</td><td>não</td><td>vale até expirar</td></tr><tr><td><code>nome</code>/<code>telefone</code>/<code>cpf</code></td><td>não</td><td>não</td><td>—</td></tr><tr><td><code>disabled_at: ""</code></td><td>não</td><td>libera</td><td>—</td></tr></tbody></table></div></section><section class="doc" id="convite"><h2>7. Convite por magic link</h2><p>Fluxo completo para convidar alguém que ainda não tem conta (implementado em <code>crazy-back/features/admin/handler.go:CreateInvite</code> + <code>crazy-back/features/invite/handler.go</code>).</p><h3>7.1 — Seu backend cria o convite</h3><div class="flowbox"><ol class="flow" data-flow="convite-criar" aria-label="Convite · 7.1 criar"><li class="step" data-step="1" data-from="back" data-to="janus" data-method="POST" data-path="/v1/invites" data-kind="request" data-short="/v1/invites"><div class="st-head"><span class="m">POST</span><code class="path">/v1/invites</code><span class="actors">Seu backend → Janus</span></div><p>Com <code>Authorization: Bearer &lt;service_key&gt;</code>.</p><pre data-kind="request"><code>{ <span class="k">"email"</span>: <span class="s">"novo@example.com"</span> }</code></pre></li><li class="step" data-step="2" data-from="janus" data-to="back" data-method="201" data-path="" data-kind="response" data-short="token + expires" data-status="201"><div class="st-head"><span class="m ok">201</span><span class="actors">Janus → Seu backend</span></div><p>Resposta com <code>MAILER_STUB=true</code>, o padrão em dev.</p><pre data-kind="response"><code>{
+  <span class="k">"message"</span>: <span class="s">"invite sent"</span>,
+  <span class="k">"email"</span>: <span class="s">"novo@example.com"</span>,
+  <span class="k">"token"</span>: <span class="s">"a1b2c3..."</span>,
+  <span class="k">"expires_at"</span>: <span class="s">"2026-09-24T16:17:21Z"</span>
+}</code></pre></li><li class="step" data-step="3" data-from="back" data-to="back" data-method="guardar" data-path="" data-kind="local" data-short="guarda hash+role"><div class="st-head"><span class="m loc">guardar</span><span class="actors">em Seu backend</span></div><p>Guarda localmente <code>{ email, role escolhida, hash do token, expires_at }</code>. O Janus só guarda o hash; guardar de novo localmente é o que permite ao seu backend saber <strong>qual role</strong> aplicar no aceite (o Janus não tem esse conceito). Ver <code>crazy-back/internal/models/models.go:Invite</code> + <code>HashInviteToken</code> (SHA-256 simples, calculado do seu lado).</p></li><li class="step" data-step="4" data-from="back" data-to="back" data-method="link" data-path="" data-kind="local" data-short="monta link"><div class="st-head"><span class="m loc">link</span><span class="actors">em Seu backend</span></div><p>Monta o link <code>&lt;seu-frontend&gt;/accept-invite?token=&lt;token&gt;</code> e mostra/copia para o admin enviar (ou, com mailer real, nem chega a isso).</p></li></ol></div><p><code>token</code>/<code>expires_at</code> só existem com <code>MAILER_STUB=true</code>. Com um mailer real (<code>MAILER_STUB=false</code>), o Janus entrega o convite por e-mail e <strong>não</strong> devolve o token — nesse caso seu backend não tem como montar o link sozinho; o e-mail enviado pelo Janus é quem carrega o link (ajuste o template de e-mail para apontar para o <code>accept_url</code> do seu produto, não para o Janus).</p><h3>7.2 — O convidado aceita (endpoint público, sem auth)</h3><div class="flowbox"><ol class="flow" data-flow="convite-aceitar" aria-label="Convite · 7.2 aceitar"><li class="step" data-step="1" data-from="browser" data-to="back" data-method="POST" data-path="/api/invite/accept" data-kind="request" data-short="/api/invite/accept"><div class="st-head"><span class="m">POST</span><code class="path">/api/invite/accept</code><span class="actors">Navegador → Seu backend</span></div><p>Endpoint público do seu backend (sem JWT, sem service key).</p><pre data-kind="request"><code>{ <span class="k">"token"</span>: <span class="s">"a1b2c3..."</span>, <span class="k">"password"</span>: <span class="s">"novaSenha123"</span>, <span class="k">"nome"</span>: <span class="s">"Nome Completo"</span> }</code></pre></li><li class="step" data-step="2" data-from="back" data-to="back" data-method="hash" data-path="" data-kind="local" data-short="confere convite"><div class="st-head"><span class="m loc">hash</span><span class="actors">em Seu backend</span></div><p>Recalcula o hash do <code>token</code> recebido e busca o convite local por esse hash — confere se já foi usado / expirou <strong>antes</strong> de gastar uma chamada no Janus.</p></li><li class="step" data-step="3" data-from="back" data-to="janus" data-method="POST" data-path="/v1/invites/accept" data-kind="request" data-short="/v1/invites/accept"><div class="st-head"><span class="m">POST</span><code class="path">/v1/invites/accept</code><span class="actors">Seu backend → Janus</span></div><p>Endpoint <strong>público no Janus também</strong> (rate-limited) — o token opaco É a autenticação.</p><pre data-kind="request"><code>{ <span class="k">"token"</span>: <span class="s">"a1b2c3..."</span>, <span class="k">"password"</span>: <span class="s">"novaSenha123"</span>, <span class="k">"nome"</span>: <span class="s">"Nome Completo"</span> }</code></pre></li><li class="step" data-step="4" data-from="janus" data-to="back" data-method="200" data-path="" data-kind="response" data-short="account activated" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Janus → Seu backend</span></div><pre data-kind="response"><code>{ <span class="k">"message"</span>: <span class="s">"account activated"</span>, <span class="k">"user_id"</span>: <span class="s">"&lt;uuid&gt;"</span> }</code></pre></li><li class="step" data-step="5" data-from="back" data-to="back" data-method="Profile" data-path="" data-kind="local" data-short="cria Profile"><div class="st-head"><span class="m loc">Profile</span><span class="actors">em Seu backend</span></div><p>Cria o <code>Profile</code> local (<code>id = user_id</code>, <code>role</code> = a escolhida no passo 7.1), gera qualquer dado inicial do seu produto e marca o convite local como aceito.</p></li><li class="step" data-step="6" data-from="back" data-to="janus" data-method="POST" data-path="/v1/auth/login" data-kind="request" data-short="/v1/auth/login"><div class="st-head"><span class="m">POST</span><code class="path">/v1/auth/login</code><span class="actors">Seu backend → Janus</span></div><p>(Opcional, mas é o que o <code>crazy-back</code> faz) já loga o usuário com o e-mail + a senha que ele acabou de definir — assim o convidado já cai logado.</p></li><li class="step" data-step="7" data-from="back" data-to="browser" data-method="200" data-path="" data-kind="response" data-short="tokens" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Seu backend → Navegador</span></div><p>Devolve os tokens ao frontend.</p></li></ol></div><p>Regras do Janus que valem a pena saber (<code>AUTH-MVP.md</code> §7 "Invite"):</p><ul><li>Token amarra o e-mail: aceitar com outro e-mail é rejeitado.</li><li>Um novo invite para o mesmo e-mail invalida os invites anteriores desse e-mail.</li><li>Convite não é signup aberto: só quem tem o token entra.</li></ul></section><section class="doc" id="magic-link"><h2>8. Magic link de login (usuário já existente)</h2><p>Diferente do invite (que é para criar conta), isto é "esqueci minha senha mas quero só entrar" / passwordless login para quem <strong>já tem conta ativa</strong>.</p><div class="flowbox"><ol class="flow" data-flow="magic-link" aria-label="Magic link de login"><li class="step" data-step="1" data-from="back" data-to="janus" data-method="POST" data-path="/v1/auth/magic-link" data-kind="request" data-short="/v1/auth/magic-link"><div class="st-head"><span class="m">POST</span><code class="path">/v1/auth/magic-link</code><span class="actors">Seu backend → Janus</span></div><pre data-kind="request"><code>{ <span class="k">"email"</span>: <span class="s">"user@example.com"</span> }</code></pre></li><li class="step" data-step="2" data-from="janus" data-to="back" data-method="200" data-path="" data-kind="response" data-short="resposta genérica" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Janus → Seu backend</span></div><p>Resposta <strong>sempre genérica</strong> (não revela se o e-mail existe).</p><pre data-kind="response"><code>{ <span class="k">"message"</span>: <span class="s">"if the email exists, a magic link will be sent"</span> }</code></pre></li><li class="step" data-step="3" data-from="janus" data-to="janus" data-method="log" data-path="" data-kind="local" data-short="token no log"><div class="st-head"><span class="m loc">log</span><span class="actors">em Janus</span></div><p>Com <code>MAILER_STUB=true</code> o token vai só para o <strong>log do container</strong> do Janus.</p></li><li class="step" data-step="4" data-from="back" data-to="janus" data-method="POST" data-path="/v1/auth/magic-link/consume" data-kind="request" data-short="/…/magic-link/consume"><div class="st-head"><span class="m">POST</span><code class="path">/v1/auth/magic-link/consume</code><span class="actors">Seu backend → Janus</span></div><pre data-kind="request"><code>{ <span class="k">"token"</span>: <span class="s">"a1b2c3..."</span> }</code></pre></li><li class="step" data-step="5" data-from="janus" data-to="back" data-method="200" data-path="" data-kind="response" data-short="tokens" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Janus → Seu backend</span></div><p>Mesmo shape do login (<code>access_token</code>/<code>refresh_token</code>/...), ou o desafio de 2FA se <code>2fa_enabled</code>.</p><pre data-kind="response"><code>{
+  <span class="k">"access_token"</span>: <span class="s">"eyJ..."</span>,
+  <span class="k">"refresh_token"</span>: <span class="s">"a1b2c3..."</span>,
+  <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>,
+  <span class="k">"expires_in"</span>: 900
+}</code></pre></li><li class="step" data-step="6" data-from="janus" data-to="back" data-method="401" data-path="" data-kind="response" data-short="sem senha" data-status="401" data-branch="bloqueio"><div class="st-head"><span class="m err">401</span><span class="actors">Janus → Seu backend</span><span class="branch">bloqueio</span></div><p>Bloqueado se o usuário ainda não tiver senha definida (convite não aceito) — evita conta zumbi.</p></li></ol></div><p>Não há retorno de token na API para esse endpoint — diferente do invite, aqui não há service key na chamada, então liberar o token na resposta seria um risco real de enumeração. Para usar isso de verdade em dev, leia o log do Janus (<code>docker compose logs -f app</code>) ou implemente um mailer real antes de habilitar esse fluxo para o usuário final.</p></section><section class="doc" id="recuperacao"><h2>9. Recuperação de senha</h2><div class="flowbox"><ol class="flow" data-flow="recuperacao" aria-label="Recuperação de senha"><li class="step" data-step="1" data-from="back" data-to="janus" data-method="POST" data-path="/v1/password/forgot" data-kind="request" data-short="/v1/password/forgot"><div class="st-head"><span class="m">POST</span><code class="path">/v1/password/forgot</code><span class="actors">Seu backend → Janus</span></div><pre data-kind="request"><code>{ <span class="k">"email"</span>: <span class="s">"user@example.com"</span> }</code></pre></li><li class="step" data-step="2" data-from="janus" data-to="back" data-method="200" data-path="" data-kind="response" data-short="resposta genérica" data-status="200"><div class="st-head"><span class="m ok">200</span><span class="actors">Janus → Seu backend</span></div><p>Resposta sempre genérica (mesma lógica anti-enumeração do magic-link). Token só no log (<code>MAILER_STUB=true</code>) — não volta na API.</p></li><li class="step" data-step="3" data-from="back" data-to="janus" data-method="POST" data-path="/v1/password/reset" data-kind="request" data-short="/v1/password/reset"><div class="st-head"><span class="m">POST</span><code class="path">/v1/password/reset</code><span class="actors">Seu backend → Janus</span></div><pre data-kind="request"><code>{ <span class="k">"token"</span>: <span class="s">"a1b2c3..."</span>, <span class="k">"new_password"</span>: <span class="s">"novaSenha123"</span> }</code></pre></li><li class="step" data-step="4" data-from="janus" data-to="janus" data-method="reset" data-path="" data-kind="local" data-short="revoga famílias"><div class="st-head"><span class="m loc">reset</span><span class="actors">em Janus</span></div><p>Troca a senha, consome o token e <strong>revoga todas as famílias de refresh token</strong> do usuário (força novo login em todo lugar).</p></li></ol></div><p>Seu backend não precisa fazer nada além de repassar essas duas chamadas — não há role/<code>Profile</code> envolvido aqui.</p></section><section class="doc" id="2fa"><h2>10. 2FA (opcional)</h2><p>Só implemente se seu produto realmente for usar. Fluxo (ver <code>janus/features/twofa/handler.go</code>):</p><ol class="plain"><li><strong>Ativar:</strong> <code>POST /v1/me/2fa/enable</code> (Bearer access) sem body → devolve <code>secret</code> (mostrar como QR code). Chamar de novo <strong>com</strong> <code>{"code": "123456"}</code> (código do app autenticador) para confirmar e ligar de fato.</li><li><strong>Login com 2FA ligado:</strong> <code>POST /v1/auth/login</code> não devolve tokens — devolve <code>{"requires_2fa": true, "challenge_token": "..."}</code>. Seu frontend pede o código e chama <code>POST /v1/auth/2fa/verify</code> com <code>{ "challenge_token": "...", "code": "123456" }</code>, que aí sim devolve os tokens normais.</li><li><strong>Desativar:</strong> <code>POST /v1/me/2fa/disable</code> com <code>{"password": "..."}</code> <strong>ou</strong> <code>{"code": "..."}</code> (reauth — sessão roubada sozinha não desliga 2FA).</li></ol><p>Nada disso toca em <code>Profile</code>/role — é inteiramente gerenciado pelo Janus.</p></section><section class="doc" id="erros"><h2>11. Erros, rate limit e lockout</h2><ul><li>Erros do Janus vêm como <code>{"error": "mensagem"}</code> com o status HTTP apropriado (400/401/403/404/409/429/500). Repasse o <code>error</code> para o seu frontend quando fizer proxy (ver <code>crazy-back/features/auth/handler.go</code> — todo handler de proxy relay o body de erro do upstream). O proxy repassa <strong>status e corpo</strong> como vieram: por exemplo, o <code>429 account temporarily locked</code> do lockout chega ao front como 429, não como 401 (<code>janus.Failure</code> em <code>crazy-back/internal/janus/client.go</code>).</li><li><strong>Falha de login é sempre <code>401 {"error":"invalid credentials"}</code></strong>, seja e-mail inexistente, sem senha, senha errada ou conta desabilitada (ver <a class="lnk" href="#login">§3</a>). Não diferencie esses casos no seu backend nem no seu front. O texto <code>account disabled</code> não existe mais em nenhuma resposta de login/refresh.</li><li>Rate limit (<code>429 {"error":"rate limit exceeded"}</code>) é <strong>por IP + rota</strong>, em memória, no próprio Janus. Se seu backend é o único chamador (todo tráfego sai do mesmo IP), ajuste <code>RATE_LIMIT_REQUESTS</code>/<code>RATE_LIMIT_WINDOW</code> no ambiente do Janus para não se auto-limitar (é o que o <code>docker-compose.yml</code> deste workspace já faz).</li><li>Lockout de conta (<code>LOCKOUT_THRESHOLD</code>/<code>LOCKOUT_DURATION</code>) é por conta+IP, também em memória — mesmo caveat de multi-réplica do rate limit (ver README do Janus, seção "Security Notes").</li></ul><div class="tablewrap"><table><thead><tr><th>Status</th><th>Corpo (`error`)</th><th>Quando</th></tr></thead><tbody><tr><td><code>401</code></td><td><code>invalid credentials</code></td><td>toda falha de login</td></tr><tr><td><code>401</code></td><td><code>invalid refresh token</code></td><td>refresh inválido, expirado, reutilizado ou de usuário desabilitado</td></tr><tr><td><code>401</code></td><td><code>invalid token</code></td><td>JWT inválido ou <code>Profile</code> inativo no seu produto</td></tr><tr><td><code>429</code></td><td><code>account temporarily locked</code></td><td>lockout de conta</td></tr><tr><td><code>429</code></td><td><code>rate limit exceeded</code></td><td>rate limit por IP + rota</td></tr></tbody></table></div></section><section class="doc" id="checklist"><h2>12. Checklist de integração</h2><ul class="checks"><li><input type="checkbox" id="ck0"><label for="ck0"><code>JWT_SECRET</code> idêntico nos dois lados, com 45+ caracteres; cada <code>SERVICE_KEY</code> também 45+.</label></li><li><input type="checkbox" id="ck1"><label for="ck1"><code>DEV_ENV</code> <strong>não</strong> definido (ou <code>false</code>) no Janus em produção.</label></li><li><input type="checkbox" id="ck2"><label for="ck2">Service key do Janus só existe no seu <strong>backend</strong> (nunca no front, nunca em variável exposta ao browser).</label></li><li><input type="checkbox" id="ck3"><label for="ck3">Middleware de auth no seu backend valida o JWT localmente (HS256, mesmo segredo) — nenhuma chamada ao Janus por request autenticado.</label></li><li><input type="checkbox" id="ck4"><label for="ck4">Tabela local própria (<code>Profile</code> ou equivalente) indexada pelo <code>sub</code>/<code>id</code> do Janus, guardando role + qualquer dado de produto.</label></li><li><input type="checkbox" id="ck5"><label for="ck5">CRUD de usuário no seu backend sempre faz as duas pontas: Janus (identidade) + tabela local (role/dados) — nunca só uma.</label></li><li><input type="checkbox" id="ck6"><label for="ck6">Login do seu backend devolve <strong>a mesma</strong> resposta (<code>401 invalid credentials</code>) para todas as falhas, inclusive <code>Profile.Active=false</code> — nunca <code>account disabled</code>.</label></li><li><input type="checkbox" id="ck7"><label for="ck7">Desativar usuário = desativar nos dois lados (Janus <code>disabled_at</code> + seu <code>Active=false</code>), sabendo que o access token já emitido some só quando expira.</label></li><li><input type="checkbox" id="ck8"><label for="ck8">Fluxo de invite guarda o hash do token localmente para saber qual role aplicar no accept (o Janus não tem esse conceito).</label></li><li><input type="checkbox" id="ck9"><label for="ck9">Endpoint de accept-invite do seu backend é público (sem JWT) mas o resto do backend continua exigindo JWT válido.</label></li><li><input type="checkbox" id="ck10"><label for="ck10">Nenhum claim <code>roles</code>/<code>tenant</code> é esperado ou lido do JWT — role vem sempre do seu banco.</label></li></ul><p class="progress" id="ckprog" aria-live="polite"></p><p>Os itens marcados ficam salvos só neste navegador (<code>localStorage</code>); se ele estiver bloqueado, a lista continua funcionando, sem memória.</p></section><section class="doc" id="endpoints"><h2>Referência rápida de endpoints do Janus</h2><div class="tools"><input type="search" id="epq" placeholder="filtrar endpoints" aria-label="Filtrar endpoints"><label class="chip"><input type="checkbox" id="epsvc"> só com service key</label></div><div class="tablewrap"><table id="eptable"><thead><tr><th>Método</th><th>Rota</th><th>Auth</th><th>Uso típico no seu backend</th></tr></thead><tbody><tr data-auth="other"><td><span class="m">GET</span></td><td><code>/v1/health</code></td><td>nenhuma</td><td>healthcheck</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/auth/login</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/auth/refresh</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/auth/logout</code></td><td>Bearer access</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">GET</span></td><td><code>/v1/me</code></td><td>Bearer access</td><td>opcional (você já tem o <code>sub</code> do seu próprio JWT parse)</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/auth/magic-link</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/auth/magic-link/consume</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/auth/2fa/verify</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/me/2fa/enable</code></td><td>Bearer access</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/me/2fa/disable</code></td><td>Bearer access</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/password/forgot</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/password/reset</code></td><td>nenhuma</td><td>proxy direto</td></tr><tr data-auth="service"><td><span class="m">POST</span></td><td><code>/v1/users</code></td><td>Bearer service_key</td><td>+ criar <code>Profile</code> local</td></tr><tr data-auth="service"><td><span class="m">GET</span></td><td><code>/v1/users?page=N</code></td><td>Bearer service_key</td><td>listar (paginado, 100/pág) / achar por e-mail percorrendo as páginas</td></tr><tr data-auth="service"><td><span class="m">GET</span></td><td><code>/v1/users/:id</code></td><td>Bearer service_key</td><td>detalhe</td></tr><tr data-auth="service"><td><span class="m">PATCH</span></td><td><code>/v1/users/:id</code></td><td>Bearer service_key</td><td>editar/bloquear; troca de e-mail e bloqueio revogam sessões; + espelhar em <code>Profile</code> local</td></tr><tr data-auth="service"><td><span class="m">POST</span></td><td><code>/v1/invites</code></td><td>Bearer service_key</td><td>+ guardar invite local (role, hash)</td></tr><tr data-auth="other"><td><span class="m">POST</span></td><td><code>/v1/invites/accept</code></td><td>nenhuma</td><td>+ criar <code>Profile</code> local, marcar aceito</td></tr></tbody></table></div><p>Exemplos completos, testados de ponta a ponta, estão no código de <code>crazy-back</code> — em especial <code>features/auth/</code>, <code>features/admin/</code>, <code>features/invite/</code> e <code>internal/janus/client.go</code> (o cliente HTTP que fala com o Janus).</p></section>
+</main>
+</div>
+<footer><span>Janus · guia de integração</span><span>Fonte: <code>README.md</code> · sistema visual: <code>MASTER.md</code> · specs: <code>../janus/AUTH-MVP.md</code>, <code>../janus/SPEC-DRIVEN.md</code></span></footer>
+<dialog id="aiDialog" aria-label="Contexto para IA"><p>Seu navegador não deixou copiar sozinho. O texto abaixo está selecionado: use <kbd>Ctrl</kbd>+<kbd>C</kbd>.</p><textarea id="aiText" readonly></textarea><p><button type="button" class="btn ghost sm" id="aiClose">Fechar</button></p></dialog>
+<script id="janus-flows" type="application/json">
+{
+ "guia": "Integração de um produto com o Janus",
+ "atores": {
+  "browser": "Navegador",
+  "back": "Seu backend",
+  "janus": "Janus"
+ },
+ "fluxos": {
+  "login": {
+   "title": "Login",
+   "steps": [
+    {
+     "n": 1,
+     "from": "browser",
+     "to": "back",
+     "method": "POST",
+     "path": "/api/auth/login",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/auth/login",
+     "kind": "request"
+    },
+    {
+     "n": 3,
+     "from": "janus",
+     "to": "back",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 4,
+     "from": "back",
+     "to": "back",
+     "method": "sub",
+     "path": "",
+     "kind": "local"
+    },
+    {
+     "n": 5,
+     "from": "back",
+     "to": "back",
+     "method": "Profile",
+     "path": "",
+     "kind": "local"
+    },
+    {
+     "n": 6,
+     "from": "back",
+     "to": "browser",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 7,
+     "from": "back",
+     "to": "browser",
+     "method": "401",
+     "path": "",
+     "kind": "response",
+     "status": 401,
+     "branch": "falha"
+    },
+    {
+     "n": 8,
+     "from": "back",
+     "to": "browser",
+     "method": "429",
+     "path": "",
+     "kind": "response",
+     "status": 429,
+     "branch": "lockout"
+    }
+   ]
+  },
+  "refresh": {
+   "title": "Refresh",
+   "steps": [
+    {
+     "n": 1,
+     "from": "browser",
+     "to": "back",
+     "method": "POST",
+     "path": "/api/auth/refresh",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/auth/refresh",
+     "kind": "request"
+    },
+    {
+     "n": 3,
+     "from": "janus",
+     "to": "back",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 4,
+     "from": "back",
+     "to": "browser",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 5,
+     "from": "back",
+     "to": "browser",
+     "method": "401",
+     "path": "",
+     "kind": "response",
+     "status": 401,
+     "branch": "falha"
+    }
+   ]
+  },
+  "logout": {
+   "title": "Logout",
+   "steps": [
+    {
+     "n": 1,
+     "from": "browser",
+     "to": "back",
+     "method": "POST",
+     "path": "/api/auth/logout",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/auth/logout",
+     "kind": "request"
+    }
+   ]
+  },
+  "convite-criar": {
+   "title": "Convite · 7.1 criar",
+   "steps": [
+    {
+     "n": 1,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/invites",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "janus",
+     "to": "back",
+     "method": "201",
+     "path": "",
+     "kind": "response",
+     "status": 201
+    },
+    {
+     "n": 3,
+     "from": "back",
+     "to": "back",
+     "method": "guardar",
+     "path": "",
+     "kind": "local"
+    },
+    {
+     "n": 4,
+     "from": "back",
+     "to": "back",
+     "method": "link",
+     "path": "",
+     "kind": "local"
+    }
+   ]
+  },
+  "convite-aceitar": {
+   "title": "Convite · 7.2 aceitar",
+   "steps": [
+    {
+     "n": 1,
+     "from": "browser",
+     "to": "back",
+     "method": "POST",
+     "path": "/api/invite/accept",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "back",
+     "to": "back",
+     "method": "hash",
+     "path": "",
+     "kind": "local"
+    },
+    {
+     "n": 3,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/invites/accept",
+     "kind": "request"
+    },
+    {
+     "n": 4,
+     "from": "janus",
+     "to": "back",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 5,
+     "from": "back",
+     "to": "back",
+     "method": "Profile",
+     "path": "",
+     "kind": "local"
+    },
+    {
+     "n": 6,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/auth/login",
+     "kind": "request"
+    },
+    {
+     "n": 7,
+     "from": "back",
+     "to": "browser",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    }
+   ]
+  },
+  "magic-link": {
+   "title": "Magic link de login",
+   "steps": [
+    {
+     "n": 1,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/auth/magic-link",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "janus",
+     "to": "back",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 3,
+     "from": "janus",
+     "to": "janus",
+     "method": "log",
+     "path": "",
+     "kind": "local"
+    },
+    {
+     "n": 4,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/auth/magic-link/consume",
+     "kind": "request"
+    },
+    {
+     "n": 5,
+     "from": "janus",
+     "to": "back",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 6,
+     "from": "janus",
+     "to": "back",
+     "method": "401",
+     "path": "",
+     "kind": "response",
+     "status": 401,
+     "branch": "bloqueio"
+    }
+   ]
+  },
+  "recuperacao": {
+   "title": "Recuperação de senha",
+   "steps": [
+    {
+     "n": 1,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/password/forgot",
+     "kind": "request"
+    },
+    {
+     "n": 2,
+     "from": "janus",
+     "to": "back",
+     "method": "200",
+     "path": "",
+     "kind": "response",
+     "status": 200
+    },
+    {
+     "n": 3,
+     "from": "back",
+     "to": "janus",
+     "method": "POST",
+     "path": "/v1/password/reset",
+     "kind": "request"
+    },
+    {
+     "n": 4,
+     "from": "janus",
+     "to": "janus",
+     "method": "reset",
+     "path": "",
+     "kind": "local"
+    }
+   ]
+  }
+ }
+}
+</script>
+<script>
+(function () {
+  'use strict';
+  var root = document.documentElement;
+  var rmq = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+  function rm() { return rmq.matches; }
+  function store(k, v) {
+    try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; }
+    return null;
+  }
+  function $(s, c) { return (c || document).querySelector(s); }
+  function $$(s, c) { return [].slice.call((c || document).querySelectorAll(s)); }
+  function toast(msg) {
+    var t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = msg;
+    document.body.appendChild(t); setTimeout(function () { t.remove(); }, 1800);
+  }
+
+  /* ---------- modo + porta ---------- */
+  var modeBtns = $$('.seg button[data-mode]');
+  var dl = $('#doorL'), dr = $('#doorR'), busy = false, player = [];
+  function mode() { return root.getAttribute('data-mode') === 'dev' ? 'dev' : 'ia'; }
+  function setMode(m) {
+    root.setAttribute('data-mode', m);
+    store('janus-guia-mode', m);
+    modeBtns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === m)); });
+    if (m !== 'dev') player.forEach(function (p) { p.stop(); });
+  }
+  function switchMode(next) {
+    if (next === mode() || busy) return;
+    if (rm() || !dl || !dl.animate) { setMode(next); return; }
+    busy = true;
+    dl.style.display = dr.style.display = 'block';
+    var o = { duration: 280, easing: 'cubic-bezier(.7,0,.2,1)', fill: 'forwards' };
+    var a = dl.animate([{ transform: 'translateX(-101%)' }, { transform: 'translateX(0)' }], o);
+    dr.animate([{ transform: 'translateX(101%)' }, { transform: 'translateX(0)' }], o);
+    a.onfinish = function () {
+      setMode(next);
+      var b = dl.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-101%)' }], o);
+      dr.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(101%)' }], o);
+      b.onfinish = function () {
+        dl.getAnimations().forEach(function (x) { x.cancel(); }); dr.getAnimations().forEach(function (x) { x.cancel(); });
+        dl.style.display = dr.style.display = 'none'; busy = false;
+      };
+    };
+  }
+  modeBtns.forEach(function (b) { b.addEventListener('click', function () { switchMode(b.getAttribute('data-mode')); }); });
+  setMode(store('janus-guia-mode') === 'ia' ? 'ia' : 'dev');
+
+  /* ---------- botões de copiar ---------- */
+  function selectNode(el) {
+    var r = document.createRange(); r.selectNodeContents(el);
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+  function copyText(text, fallbackEl) {
+    function fb() { if (fallbackEl) { selectNode(fallbackEl); } toast('Selecionado: use Ctrl+C'); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast('Copiado'); }, fb);
+    } else { fb(); }
+  }
+  $$('pre').forEach(function (pre) {
+    var w = document.createElement('div'); w.className = 'codewrap';
+    pre.parentNode.insertBefore(w, pre); w.appendChild(pre);
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'copy'; b.textContent = 'copiar';
+    b.setAttribute('aria-label', 'Copiar bloco de código');
+    b.addEventListener('click', function () { copyText(pre.innerText.replace(/\n$/, ''), pre); });
+    w.appendChild(b);
+  });
+
+  /* ---------- fluxos: diagrama + passo a passo ---------- */
+  var NS = 'http://www.w3.org/2000/svg';
+  var LANES = { browser: { x: 70, n: 'Navegador' }, back: { x: 200, n: 'Seu backend' }, janus: { x: 330, n: 'Janus' } };
+  function el(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag);
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (parent) parent.appendChild(e); return e;
+  }
+  function short(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+  function buildPlayer(ol) {
+    var steps = $$(':scope > li.step', ol);
+    if (!steps.length) return;
+    var box = ol.parentNode;
+    var aside = document.createElement('aside'); aside.className = 'player'; aside.setAttribute('aria-label', 'Diagrama de sequência do fluxo');
+    var rowH = 38, top = 46, H = top + steps.length * rowH + 10;
+    var svg = el('svg', { viewBox: '0 0 400 ' + H, role: 'img', 'aria-label': 'Sequência: navegador, seu backend e Janus' });
+    Object.keys(LANES).forEach(function (k) {
+      var L = LANES[k];
+      el('line', { x1: L.x, y1: 34, x2: L.x, y2: H - 4, class: 'svg-lane' }, svg);
+      var t = el('text', { x: L.x, y: 22, 'text-anchor': 'middle', class: 'svg-name' }, svg); t.textContent = L.n;
+    });
+    var groups = steps.map(function (li, i) {
+      var from = LANES[li.getAttribute('data-from')], to = LANES[li.getAttribute('data-to')];
+      var y = top + i * rowH + 18, res = li.getAttribute('data-kind') === 'response' || li.getAttribute('data-branch');
+      var g = el('g', { 'data-i': i }, svg);
+      var sh = li.getAttribute('data-short') || li.getAttribute('data-path') || '';
+      var label = li.getAttribute('data-kind') === 'local' ? (sh || li.getAttribute('data-method')) : (li.getAttribute('data-method') || '') + ' ' + sh;
+      if (from === to) {
+        el('path', { d: 'M' + (from.x + 2) + ' ' + (y - 6) + ' h26 v14 h-24', class: 'svg-arrow' + (res ? ' res' : '') }, g);
+        el('polygon', { points: (from.x + 4) + ',' + (y + 8) + ' ' + (from.x + 12) + ',' + (y + 4) + ' ' + (from.x + 12) + ',' + (y + 12), class: 'svg-head' }, g);
+        var tt = el('text', { x: from.x + (from.x > 260 ? -2 : 34), y: y + 2, 'text-anchor': from.x > 260 ? 'end' : 'start', class: 'svg-txt' }, g);
+        tt.textContent = short(label, 22);
+      } else {
+        var dir = to.x > from.x ? 1 : -1, x1 = from.x + dir * 3, x2 = to.x - dir * 3;
+        el('line', { x1: x1, y1: y, x2: x2, y2: y, class: 'svg-arrow' + (res ? ' res' : '') }, g);
+        el('polygon', { points: x2 + ',' + y + ' ' + (x2 - dir * 8) + ',' + (y - 4) + ' ' + (x2 - dir * 8) + ',' + (y + 4), class: 'svg-head' }, g);
+        var mid = (x1 + x2) / 2;
+        var t2 = el('text', { x: mid, y: y - 5, 'text-anchor': 'middle', class: 'svg-txt' }, g); t2.textContent = short(label, 24);
+      }
+      var nn = el('text', { x: 6, y: y + 3, class: 'svg-n' }, g); nn.textContent = String(i + 1);
+      return g;
+    });
+    aside.appendChild(svg);
+    var ctl = document.createElement('div'); ctl.className = 'ctl';
+    var prev = mk('Anterior'), next = mk('Próximo'), play = mk('Reproduzir');
+    var count = document.createElement('span'); count.className = 'count';
+    ctl.appendChild(prev); ctl.appendChild(next); ctl.appendChild(play); ctl.appendChild(count);
+    var live = document.createElement('div'); live.className = 'sr'; live.setAttribute('aria-live', 'polite');
+    aside.appendChild(ctl); aside.appendChild(live);
+    box.appendChild(aside);
+    function mk(t) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn ghost sm'; b.textContent = t; return b; }
+
+    var cur = 0, timer = null;
+    function setActive(i, animate) {
+      cur = Math.max(0, Math.min(steps.length - 1, i));
+      steps.forEach(function (li, k) { li.classList.toggle('is-active', k === cur); });
+      groups.forEach(function (g, k) { g.setAttribute('class', k === cur ? 'act' : ''); });
+      count.textContent = (cur + 1) + ' / ' + steps.length;
+      prev.disabled = cur === 0; next.disabled = cur === steps.length - 1;
+      var li = steps[cur];
+      live.textContent = 'Passo ' + (cur + 1) + ' de ' + steps.length + ': ' + (li.getAttribute('data-method') || '') + ' ' + (li.getAttribute('data-path') || '');
+      if (animate && mode() === 'dev' && !rm() && li.animate) {
+        $$(':scope > *', li).forEach(function (c, j) {
+          c.animate([{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }],
+            { duration: 360, delay: j * 70, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
+        });
+      }
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } play.textContent = 'Reproduzir'; }
+    function start() {
+      if (cur >= steps.length - 1) setActive(0, true);
+      play.textContent = 'Parar';
+      timer = setInterval(function () {
+        if (cur >= steps.length - 1) { stop(); return; }
+        setActive(cur + 1, true); steps[cur].scrollIntoView({ block: 'nearest' });
+      }, 1100);
+    }
+    prev.addEventListener('click', function () { stop(); setActive(cur - 1, true); steps[cur].scrollIntoView({ block: 'nearest' }); });
+    next.addEventListener('click', function () { stop(); setActive(cur + 1, true); steps[cur].scrollIntoView({ block: 'nearest' }); });
+    play.addEventListener('click', function () { if (timer) stop(); else start(); });
+    steps.forEach(function (li, k) { li.addEventListener('click', function (e) { if (mode() === 'dev' && !e.target.closest('button,a,pre')) { stop(); setActive(k, true); } }); });
+    setActive(0, false);
+    player.push({ stop: stop });
+  }
+  $$('ol.flow').forEach(buildPlayer);
+
+  /* ---------- índice, busca ---------- */
+  var secs = $$('section.doc'), tocLinks = $$('.toc a');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (e.isIntersecting) {
+          tocLinks.forEach(function (a) { a.removeAttribute('aria-current'); });
+          var a = $('.toc a[href="#' + e.target.id + '"]'); if (a) a.setAttribute('aria-current', 'true');
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    secs.forEach(function (s) { io.observe(s); });
+  }
+  var q = $('#q'), qstat = $('#qstat');
+  var texts = secs.map(function (s) { return s.textContent.toLowerCase(); });
+  function filter() {
+    var v = q.value.trim().toLowerCase(), n = 0, first = null;
+    secs.forEach(function (s, i) {
+      var hit = !v || texts[i].indexOf(v) !== -1; if (hit && v) { n++; if (!first) first = s; }
+      s.classList.toggle('dim', !hit);
+      var li = $('.toc a[href="#' + s.id + '"]'); if (li) li.parentNode.classList.toggle('dim', !hit);
+    });
+    qstat.textContent = v ? (n + (n === 1 ? ' seção encontrada' : ' seções encontradas')) : '';
+    return first;
+  }
+  q.addEventListener('input', filter);
+  q.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { var f = filter(); if (f) f.scrollIntoView(); }
+    if (e.key === 'Escape') { q.value = ''; filter(); q.blur(); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); }
+  });
+  (function () {
+    var d = $('.toc details'), mq = window.matchMedia ? matchMedia('(max-width:980px)') : null;
+    if (!d || !mq) return;
+    function sync() { d.open = !mq.matches; }
+    sync(); if (mq.addEventListener) mq.addEventListener('change', sync);
+  })();
+
+  /* ---------- checklist ---------- */
+  var cks = $$('.checks input'), prog = $('#ckprog');
+  var saved = {}; try { saved = JSON.parse(store('janus-guia-checklist') || '{}') || {}; } catch (e) { saved = {}; }
+  function paintChecks() {
+    var n = 0;
+    cks.forEach(function (c) { if (c.checked) n++; c.closest('li').classList.toggle('done', c.checked); });
+    prog.textContent = n + ' de ' + cks.length + ' itens marcados';
+  }
+  cks.forEach(function (c) {
+    c.checked = !!saved[c.id];
+    c.addEventListener('change', function () { saved[c.id] = c.checked; store('janus-guia-checklist', JSON.stringify(saved)); paintChecks(); });
+  });
+  paintChecks();
+
+  /* ---------- tabela de endpoints ---------- */
+  var epq = $('#epq'), epsvc = $('#epsvc'), rows = $$('#eptable tbody tr');
+  function epFilter() {
+    var v = epq.value.trim().toLowerCase();
+    rows.forEach(function (r) {
+      var ok = (!v || r.textContent.toLowerCase().indexOf(v) !== -1) && (!epsvc.checked || r.getAttribute('data-auth') === 'service');
+      r.classList.toggle('hide', !ok);
+    });
+  }
+  epq.addEventListener('input', epFilter); epsvc.addEventListener('change', epFilter);
+
+  /* ---------- copiar contexto para IA (Markdown) ---------- */
+  function inline(n) {
+    var s = '';
+    [].forEach.call(n.childNodes, function (c) {
+      if (c.nodeType === 3) s += c.textContent.replace(/\s+/g, ' ');
+      else if (c.nodeType === 1) {
+        var t = c.tagName;
+        if (t === 'CODE') s += '`' + c.textContent + '`';
+        else if (t === 'STRONG' || t === 'B') s += '**' + inline(c) + '**' + (c.parentNode.classList && c.parentNode.classList.contains('warn') && c.parentNode.firstElementChild === c ? ': ' : '');
+        else if (t === 'BR') s += '\n';
+        else if (c.classList.contains('copy')) { /* ignora */ }
+        else s += inline(c);
+      }
+    });
+    return s;
+  }
+  function walk(n, out) {
+    [].forEach.call(n.children, function (c) {
+      var t = c.tagName;
+      if (t === 'FIGURE' || t === 'IMG' || c.classList.contains('dev-only') || c.classList.contains('player') || c.classList.contains('arch') || c.classList.contains('copy') || t === 'SCRIPT' || t === 'STYLE') return;
+      if (/^H[1-4]$/.test(t)) out.push('#'.repeat(+t[1] + (t === 'H1' ? 0 : 0)) + ' ' + inline(c).trim() + '\n');
+      else if (t === 'P') out.push(inline(c).trim() + '\n');
+      else if (t === 'PRE') out.push('```\n' + c.textContent.replace(/\n$/, '') + '\n```\n');
+      else if (t === 'OL' && c.classList.contains('flow')) {
+        $$(':scope > li.step', c).forEach(function (li, i) {
+          out.push((i + 1) + '. **' + li.getAttribute('data-method') + ' ' + li.getAttribute('data-path') + '** (' +
+            li.getAttribute('data-from') + ' -> ' + li.getAttribute('data-to') + ')' + (li.getAttribute('data-branch') ? ' [' + li.getAttribute('data-branch') + ']' : ''));
+          var p = $('p', li); if (p) out.push('   ' + inline(p).trim());
+          var pr = $('pre', li); if (pr) out.push('\n```\n' + pr.textContent.replace(/\n$/, '') + '\n```');
+        });
+        out.push('');
+      }
+      else if (t === 'UL' || t === 'OL') {
+        $$(':scope > li', c).forEach(function (li, i) { out.push((t === 'OL' ? (i + 1) + '. ' : '- ') + inline(li).trim()); });
+        out.push('');
+      }
+      else if (t === 'TABLE') {
+        var rs = $$('tr', c).filter(function (r) { return !r.classList.contains('hide'); });
+        rs.forEach(function (r, i) {
+          var cells = $$('th,td', r).map(function (x) { return inline(x).trim().replace(/\|/g, '\\|'); });
+          out.push('| ' + cells.join(' | ') + ' |');
+          if (i === 0) out.push('|' + cells.map(function () { return '---'; }).join('|') + '|');
+        });
+        out.push('');
+      }
+      else if (c.classList.contains('arch-ia')) {
+        var parts = [];
+        $$('.node, .edge span', c).forEach(function (x) { parts.push(x.classList.contains('node') ? inline($('b', x)).replace(/\*\*/g, '') + ' ' + ($('small', x) ? $('small', x).textContent : '') : '--' + x.textContent + '-->'); });
+        out.push('Fluxo: ' + parts.join(' ').replace(/\s+/g, ' ').trim() + '\n');
+      }
+      else if (c.classList.contains('warn')) out.push('> ' + inline(c).trim().replace(/\n/g, ' ') + '\n');
+      else if (t === 'LABEL' || t === 'INPUT' || t === 'BUTTON' || t === 'DIALOG') return;
+      else walk(c, out);
+    });
+  }
+  function buildMarkdown() {
+    var out = ['<!-- Contexto para IA: guia de integração com o Janus (gerado de index.html) -->', ''];
+    walk($('main'), out);
+    return out.join('\n').replace(/\n{3,}/g, '\n\n');
+  }
+  var dlg = $('#aiDialog'), ta = $('#aiText');
+  $$('[data-act="copy-ai"]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var md = buildMarkdown();
+      function fb() { ta.value = md; if (dlg.showModal) dlg.showModal(); ta.focus(); ta.select(); }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(md).then(function () { toast('Contexto copiado para a IA'); }, fb);
+      else fb();
+    });
+  });
+  var closeBtn = $('#aiClose'); if (closeBtn) closeBtn.addEventListener('click', function () { dlg.close(); });
+})();
+
+</script>
+</body>
+</html>

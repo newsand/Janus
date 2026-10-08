@@ -1,4 +1,4 @@
--- LoginBuskar Identity Service - Initial Schema
+-- Janus Identity Service - Initial Schema
 -- Version: alfa
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

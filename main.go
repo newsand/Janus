@@ -26,7 +26,7 @@ func main() {
 	if cfg.DevEnv {
 		logger.Warn("DEV_ENV=true: secret strength checks are disabled — never use in production")
 	}
-	logger.Info("Starting LoginBuskar Identity Service")
+	logger.Info("Starting Janus Identity Service")
 	logger.Info("Version: %s", cfg.Version)
 
 	if err := db.Init(cfg.DatabaseURL); err != nil {

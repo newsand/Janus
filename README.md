@@ -2,7 +2,7 @@
   <img src="assets/cover.jpg" alt="Janus" width="720">
 </p>
 
-# Janus (LoginBuskar) - Identity Service
+# Janus - Identity Service
 
 JWT authentication service for identity verification. No roles, no redirect — issues JWTs to prove who users are.
 
@@ -192,12 +192,12 @@ Required secrets:
 ### Docker
 
 ```bash
-docker build -t loginbuskar .
+docker build -t janus .
 docker run -p 8080:8080 \
   -e DATABASE_URL="postgres://..." \
   -e JWT_SECRET="<45+ chars>" \
   -e SERVICE_KEYS="<key 45+ chars>,<previous key 45+ chars>" \
-  loginbuskar
+  janus
 ```
 
 ### Manual

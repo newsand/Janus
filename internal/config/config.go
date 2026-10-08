@@ -37,7 +37,7 @@ func Load() *Config {
 
 	cfg = &Config{
 		Port:              getEnv("PORT", "8080"),
-		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/loginbuskar?sslmode=disable"),
+		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/janus?sslmode=disable"),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		JWTSecret:         getEnv("JWT_SECRET", "change-me-in-production"),
 		ServiceKeys:       parseServiceKeys(getEnv("SERVICE_KEYS", "")),

@@ -1,8 +1,8 @@
-# LoginBuskar — MVP enxuto (auth only)
+# Janus — MVP enxuto (auth only)
 
 **Status:** proposta fechada para ataque (2026-09-16)  
 **Job do serviço:** provar quem é. Emite JWT. **Sem** redirect OAuth/SSO.  
-**Não é job:** roles, permissões ou RBAC — isso fica **nos sistemas acessados** (Buskar, Vistoria, etc.). Este serviço só identidade + JWT.
+**Não é job:** roles, permissões ou RBAC — isso fica **nos sistemas acessados** (Vistoria, etc.). Este serviço só identidade + JWT.
 
 ---
 
@@ -175,8 +175,8 @@ desativação vão por e-mail, não pela resposta de login.
 
 ### Bootstrap e quem chama o CRUD (fechado)
 
-- **Sem role admin neste serviço.** Não existe “user admin” no LoginBuskar.
-- **Service key:** segredo de máquina (não é senha de pessoa) que Buskar/Vistoria/ops usam pra chamar CRUD e invite. Header `Authorization: Bearer <service_key>`.
+- **Sem role admin neste serviço.** Não existe “user admin” no Janus.
+- **Service key:** segredo de máquina (não é senha de pessoa) que Vistoria/ops usam pra chamar CRUD e invite. Header `Authorization: Bearer <service_key>`.
 - **Bootstrap:** só configurar a service key (env); user seed opcional sem privilégio extra. CRUD nunca abre por JWT de usuário.
 - **Key hygiene (fechado):** no mínimo **duas keys** ativas (current + previous) pra rotação sem downtime; revogar a antiga após trocar; escopo implícito do MVP = só mutações de user/invite neste serviço (não é JWT assinado pra fronts). Logar uso da key sem logar o valor.
 - Produtos mapeiam `sub` → papéis no **próprio** banco.
