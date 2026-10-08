@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/internal/config"
+	"github.com/newsand/janus/internal/config"
 )
 
 type rateLimitEntry struct {

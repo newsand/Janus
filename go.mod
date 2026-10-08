@@ -1,4 +1,4 @@
-module github.com/newsand/base-login
+module github.com/newsand/janus
 
 go 1.26.0
 

@@ -3,16 +3,18 @@ package users
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/features/auth"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
-	"github.com/newsand/base-login/internal/models"
+	"github.com/google/uuid"
+	"github.com/newsand/janus/features/auth"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -92,7 +94,7 @@ func TestAcceptInviteRejectsExistingAccountWithPassword(t *testing.T) {
 
 	var user models.User
 	db.DB().Where("email = ?", "existing@example.com").First(&user)
-	
+
 	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte("existing123")); err != nil {
 		t.Error("password should NOT have been changed")
 	}
@@ -136,7 +138,7 @@ func TestAcceptInviteAllowsPendingUserWithoutPassword(t *testing.T) {
 
 	var user models.User
 	db.DB().Where("email = ?", "pending@example.com").First(&user)
-	
+
 	if user.PasswordHash == nil {
 		t.Error("password should have been set")
 	}
@@ -288,5 +290,162 @@ func TestDisableUserRefreshRejected(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("refresh after disable should return 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListUsersPaginates(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	for i := 0; i < 150; i++ {
+		db.DB().Create(&models.User{
+			Email: fmt.Sprintf("user%03d@example.com", i),
+			Nome:  "User",
+		})
+	}
+
+	get := func(path string) (int, map[string]interface{}) {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", "Bearer test-service-key")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		return w.Code, body
+	}
+
+	code, p1 := get("/v1/users")
+	if code != http.StatusOK || len(p1["users"].([]interface{})) != 100 {
+		t.Fatalf("page 1: code=%d users=%v", code, len(p1["users"].([]interface{})))
+	}
+	if p1["total"].(float64) != 150 || p1["total_pages"].(float64) != 2 || p1["page"].(float64) != 1 {
+		t.Fatalf("unexpected metadata: %v", p1)
+	}
+
+	code, p2 := get("/v1/users?page=2")
+	if code != http.StatusOK || len(p2["users"].([]interface{})) != 50 {
+		t.Fatalf("page 2: code=%d users=%v", code, len(p2["users"].([]interface{})))
+	}
+
+	seen := map[string]bool{}
+	for _, body := range []map[string]interface{}{p1, p2} {
+		for _, u := range body["users"].([]interface{}) {
+			id := u.(map[string]interface{})["id"].(string)
+			if seen[id] {
+				t.Fatalf("user %s appears on more than one page", id)
+			}
+			seen[id] = true
+		}
+	}
+	if len(seen) != 150 {
+		t.Fatalf("expected 150 distinct users across pages, got %d", len(seen))
+	}
+
+	_, p3 := get("/v1/users?page=3")
+	if len(p3["users"].([]interface{})) != 0 {
+		t.Fatalf("page 3 should be empty")
+	}
+
+	for _, bad := range []string{"0", "-1", "abc"} {
+		if code, _ := get("/v1/users?page=" + bad); code != http.StatusBadRequest {
+			t.Fatalf("page=%s: expected 400, got %d", bad, code)
+		}
+	}
+}
+
+func TestBlankNomeRejected(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	send := func(method, path string, body map[string]interface{}) int {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(method, path, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-service-key")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for i, nome := range []interface{}{"", "   ", "\t\n ", nil} {
+		body := map[string]interface{}{"email": fmt.Sprintf("blank%d@example.com", i), "password": "password123"}
+		if nome != nil {
+			body["nome"] = nome
+		}
+		if code := send("POST", "/v1/users", body); code != http.StatusBadRequest {
+			t.Errorf("create with nome=%q: expected 400, got %d", nome, code)
+		}
+	}
+
+	// Surrounding spaces are trimmed, not rejected.
+	if code := send("POST", "/v1/users", map[string]interface{}{"email": "ok@example.com", "password": "password123", "nome": "  Maria  "}); code != http.StatusCreated {
+		t.Fatalf("create with padded nome: expected 201, got %d", code)
+	}
+	var u models.User
+	db.DB().Where("email = ?", "ok@example.com").First(&u)
+	if u.Nome != "Maria" {
+		t.Errorf("expected stored nome %q, got %q", "Maria", u.Nome)
+	}
+
+	for _, nome := range []string{"", "   "} {
+		if code := send("PATCH", "/v1/users/"+u.ID, map[string]interface{}{"nome": nome}); code != http.StatusBadRequest {
+			t.Errorf("patch nome=%q: expected 400, got %d", nome, code)
+		}
+	}
+	db.DB().First(&u, "id = ?", u.ID)
+	if u.Nome != "Maria" {
+		t.Errorf("nome must be untouched after rejected patch, got %q", u.Nome)
+	}
+	if code := send("PATCH", "/v1/users/"+u.ID, map[string]interface{}{"nome": " Ana "}); code != http.StatusOK {
+		t.Fatalf("patch with padded nome: expected 200, got %d", code)
+	}
+	db.DB().First(&u, "id = ?", u.ID)
+	if u.Nome != "Ana" {
+		t.Errorf("expected trimmed nome %q, got %q", "Ana", u.Nome)
+	}
+}
+
+func TestUpdateUserEmailChangeRevokesRefreshTokens(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	user := &models.User{Email: "old@example.com", Nome: "Old"}
+	if err := db.DB().Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+	rt := &models.RefreshToken{UserID: user.ID, TokenHash: "h1", FamilyID: uuid.New().String(), ExpiresAt: time.Now().Add(time.Hour)}
+	if err := db.DB().Create(rt).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	patch := func(body map[string]interface{}) int {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("PATCH", "/v1/users/"+user.ID, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-service-key")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+	revoked := func() bool {
+		var got models.RefreshToken
+		db.DB().First(&got, "id = ?", rt.ID)
+		return got.RevokedAt != nil
+	}
+
+	if code := patch(map[string]interface{}{"nome": "Other"}); code != http.StatusOK || revoked() {
+		t.Fatalf("nome change must not revoke (code=%d)", code)
+	}
+	if code := patch(map[string]interface{}{"email": "new@example.com"}); code != http.StatusOK {
+		t.Fatalf("email change: got %d", code)
+	}
+	if !revoked() {
+		t.Error("email change must revoke refresh tokens")
 	}
 }

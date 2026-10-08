@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
 )
 
 func RegisterRoutes(r *gin.RouterGroup) {

@@ -6,20 +6,26 @@ import (
 	"syscall"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/features/auth"
-	"github.com/newsand/base-login/features/health"
-	"github.com/newsand/base-login/features/password"
-	"github.com/newsand/base-login/features/twofa"
-	"github.com/newsand/base-login/features/users"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
-	"github.com/newsand/base-login/internal/logger"
+	"github.com/newsand/janus/features/auth"
+	"github.com/newsand/janus/features/health"
+	"github.com/newsand/janus/features/password"
+	"github.com/newsand/janus/features/twofa"
+	"github.com/newsand/janus/features/users"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/logger"
 )
 
 func main() {
 	cfg := config.Load()
 
 	logger.Init(cfg.LogLevel)
+	if err := cfg.Validate(); err != nil {
+		logger.Fatal("Invalid configuration: %v", err)
+	}
+	if cfg.DevEnv {
+		logger.Warn("DEV_ENV=true: secret strength checks are disabled — never use in production")
+	}
 	logger.Info("Starting LoginBuskar Identity Service")
 	logger.Info("Version: %s", cfg.Version)
 

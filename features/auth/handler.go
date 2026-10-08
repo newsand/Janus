@@ -2,16 +2,17 @@ package auth
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
-	"github.com/newsand/base-login/internal/logger"
-	"github.com/newsand/base-login/internal/middleware"
-	"github.com/newsand/base-login/internal/models"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/middleware"
+	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -50,6 +51,25 @@ type MagicLinkConsumeRequest struct {
 	Token string `json:"token" binding:"required"`
 }
 
+// dummyHashCost must match users.BcryptCost (not imported: users' tests import auth).
+const dummyHashCost = 12
+
+var (
+	dummyHashOnce sync.Once
+	dummyHash     string
+)
+
+// dummyPasswordHash is a bcrypt hash (same cost as real passwords) that no
+// password matches, computed once. Login compares against it when there is
+// no real hash so every failure path costs the same.
+func dummyPasswordHash() string {
+	dummyHashOnce.Do(func() {
+		h, _ := bcrypt.GenerateFromPassword([]byte(models.GenerateOpaqueToken()), dummyHashCost)
+		dummyHash = string(h)
+	})
+	return dummyHash
+}
+
 func Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,25 +83,29 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// One authentication failure, one response: unknown email, no password
+	// set, wrong password and disabled account all answer 401 "invalid
+	// credentials" and always spend exactly one bcrypt comparison (a dummy
+	// hash stands in when there is no real one), so neither the body nor the
+	// timing says which case it was.
 	var user models.User
-	if err := db.DB().Where("email = ?", req.Email).First(&user).Error; err != nil {
+	found := db.DB().Where("email = ?", req.Email).First(&user).Error == nil
+
+	hash := dummyPasswordHash()
+	if found && user.PasswordHash != nil {
+		hash = *user.PasswordHash
+	}
+	passwordErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password))
+
+	if !found || user.PasswordHash == nil || passwordErr != nil {
 		middleware.RecordFailedAttempt(lockoutKey)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
 
+	// Right password on a disabled account: no token, and no lockout change
+	// either way (the caller did prove the password), same indistinguishable 401.
 	if user.DisabledAt != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "account disabled"})
-		return
-	}
-
-	if user.PasswordHash == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
-		middleware.RecordFailedAttempt(lockoutKey)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
@@ -148,7 +172,7 @@ func Refresh(c *gin.Context) {
 		return
 	}
 	if user.DisabledAt != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "account disabled"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
 		return
 	}
 

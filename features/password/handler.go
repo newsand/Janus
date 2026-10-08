@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
-	"github.com/newsand/base-login/internal/logger"
-	"github.com/newsand/base-login/internal/middleware"
-	"github.com/newsand/base-login/internal/models"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/middleware"
+	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
 

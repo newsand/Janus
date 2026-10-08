@@ -1,4 +1,8 @@
-# LoginBuskar - Identity Service
+<p align="center">
+  <img src="assets/cover.jpg" alt="Janus" width="720">
+</p>
+
+# Janus (LoginBuskar) - Identity Service
 
 JWT authentication service for identity verification. No roles, no redirect — issues JWTs to prove who users are.
 
@@ -8,8 +12,8 @@ JWT authentication service for identity verification. No roles, no redirect — 
 
 ```bash
 # Clone and enter
-git clone https://github.com/newsand/base-login.git
-cd base-login
+git clone https://github.com/newsand/janus.git
+cd janus
 
 # Configure (optional, defaults work for local dev)
 cp .env.example .env
@@ -32,8 +36,9 @@ All settings via environment variables:
 | `PORT` | `8080` | HTTP port |
 | `DATABASE_URL` | `postgres://...` | Postgres connection string |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `JWT_SECRET` | - | **Required in production**. Min 32 chars |
-| `SERVICE_KEYS` | - | Comma-separated keys for CRUD API. Min 2 for rotation |
+| `DEV_ENV` | `false` | `true` = dev mode: no secret strength checks (local testing only). Unset/`false` = production rules below |
+| `JWT_SECRET` | - | **Required in production**: min 45 chars, else the service refuses to start |
+| `SERVICE_KEYS` | - | Comma-separated keys for CRUD API. Min 2 for rotation. In production: not empty, **each key min 45 chars**, else the service refuses to start |
 | `ACCESS_TOKEN_TTL` | `15m` | JWT access token lifetime |
 | `REFRESH_TOKEN_TTL` | `336h` | Refresh token lifetime (14 days) |
 | `MAGIC_LINK_TTL` | `15m` | Magic link expiry |
@@ -84,9 +89,9 @@ POST /v1/me/2fa/disable      # Disable 2FA (requires JWT + reauth)
 
 ```
 POST   /v1/users             # Create user
-GET    /v1/users             # List users
+GET    /v1/users?page=N      # List users (paginated, 100 per page)
 GET    /v1/users/:id         # Get user
-PATCH  /v1/users/:id         # Update user (set disabled_at to disable)
+PATCH  /v1/users/:id         # Update user (disabled_at disables; changing email or disabling revokes all refresh tokens)
 POST   /v1/invites           # Create invite
 POST   /v1/invites/accept    # Accept invite (public, rate limited)
 ```
@@ -181,8 +186,8 @@ The repo includes `nixpacks.toml`. Deploy by connecting to your Git repo.
 
 Required secrets:
 - `DATABASE_URL` - Postgres URL
-- `JWT_SECRET` - Secure secret (32+ chars)
-- `SERVICE_KEYS` - API keys for CRUD
+- `JWT_SECRET` - Secure secret (45+ chars unless `DEV_ENV=true`)
+- `SERVICE_KEYS` - API keys for CRUD (each 45+ chars unless `DEV_ENV=true`)
 
 ### Docker
 
@@ -190,8 +195,8 @@ Required secrets:
 docker build -t loginbuskar .
 docker run -p 8080:8080 \
   -e DATABASE_URL="postgres://..." \
-  -e JWT_SECRET="your-secret" \
-  -e SERVICE_KEYS="key1,key2" \
+  -e JWT_SECRET="<45+ chars>" \
+  -e SERVICE_KEYS="<key 45+ chars>,<previous key 45+ chars>" \
   loginbuskar
 ```
 
@@ -222,12 +227,15 @@ Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, 
 
 ## Security Notes
 
-- **JWT Secret**: Use 32+ character random string in production
+- **Secrets at startup**: with `DEV_ENV` unset/`false` (production) the service refuses to start unless `JWT_SECRET` and every `SERVICE_KEYS` entry have at least 45 characters (and `SERVICE_KEYS` is not empty). `DEV_ENV=true` skips the check and logs a warning; it is for local testing only (the bundled `docker-compose.yml` sets it). Generate with e.g. `openssl rand -base64 48`.
+- **JWT Secret**: Use a 45+ character random string in production
 - **Service Keys**: Rotate keys by adding new key, updating consumers, then removing old key. Constant-time comparison used.
 - **Refresh Tokens**: Stored as SHA-256 hashes. Rotation on each use. Reuse detection revokes entire family (atomic check prevents TOCTOU).
 - **Passwords**: bcrypt cost 12
 - **Rate Limiting**: In-memory per-endpoint. Configure via `RATE_LIMIT_*` vars. **Note:** In-memory counters do not sync across replicas. For multi-replica deployments, implement Redis/DB-backed rate limiting or use an API gateway.
 - **Account Lockout**: In-memory per-account/IP. Configure via `LOCKOUT_*` vars. Same multi-replica caveat as rate limiting.
+- **Login failures**: One failure for everything — unknown email, no password set, wrong password and disabled account all return `401 {"error":"invalid credentials"}` with exactly one bcrypt comparison each (dummy hash when none exists). Wrong password counts toward lockout (disabled accounts included); a correct password on a disabled account issues no token and does not touch the lockout. There is no `account disabled` response.
+- **Session revocation via service key**: `PATCH /users/:id` revokes all of the user's refresh tokens immediately when `disabled_at` is set (security block) **or** when `email` changes. Other fields (`nome`, `telefone`, `cpf`) revoke nothing. There is no standalone "revoke sessions" endpoint — the block is the mechanism.
 - **Soft-disable**: When a user is disabled via `PATCH /users/:id`, all refresh tokens are revoked immediately. However, existing **access JWTs remain valid until their TTL** (~15 min). Middleware does not re-check `disabled_at` on every request in this MVP.
 
 ## Client Integration

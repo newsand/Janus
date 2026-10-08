@@ -2,14 +2,16 @@ package users
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
-	"github.com/newsand/base-login/internal/logger"
-	"github.com/newsand/base-login/internal/middleware"
-	"github.com/newsand/base-login/internal/models"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/middleware"
+	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -65,6 +67,13 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 
+	// binding:"required" only rejects "" — trim first so "   " is rejected too.
+	req.Nome = strings.TrimSpace(req.Nome)
+	if req.Nome == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": "nome must not be blank"})
+		return
+	}
+
 	var existing models.User
 	if err := db.DB().Where("email = ?", req.Email).First(&existing).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "email already exists"})
@@ -108,9 +117,32 @@ func CreateUser(c *gin.Context) {
 	})
 }
 
+// UsersPageSize is the fixed page size of GET /v1/users.
+const UsersPageSize = 100
+
 func ListUsers(c *gin.Context) {
+	page := 1
+	if raw := c.Query("page"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid page"})
+			return
+		}
+		page = n
+	}
+
+	var total int64
+	if err := db.DB().Model(&models.User{}).Count(&total).Error; err != nil {
+		logger.Error("Failed to count users: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	// id as tiebreaker keeps page boundaries stable when created_at collides.
 	var users []models.User
-	if err := db.DB().Order("created_at DESC").Limit(100).Find(&users).Error; err != nil {
+	if err := db.DB().Order("created_at DESC, id DESC").
+		Limit(UsersPageSize).Offset((page - 1) * UsersPageSize).
+		Find(&users).Error; err != nil {
 		logger.Error("Failed to list users: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -131,7 +163,13 @@ func ListUsers(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"users": result})
+	c.JSON(http.StatusOK, gin.H{
+		"users":       result,
+		"page":        page,
+		"page_size":   UsersPageSize,
+		"total":       total,
+		"total_pages": (total + UsersPageSize - 1) / UsersPageSize,
+	})
 }
 
 func GetUser(c *gin.Context) {
@@ -182,7 +220,12 @@ func UpdateUser(c *gin.Context) {
 	}
 
 	if req.Nome != nil {
-		updates["nome"] = *req.Nome
+		nome := strings.TrimSpace(*req.Nome)
+		if nome == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": "nome must not be blank"})
+			return
+		}
+		updates["nome"] = nome
 	}
 	if req.Telefone != nil {
 		updates["telefone"] = *req.Telefone
@@ -191,6 +234,10 @@ func UpdateUser(c *gin.Context) {
 		updates["cpf"] = *req.CPF
 	}
 	disabling := false
+	emailChanged := false
+	if _, ok := updates["email"]; ok {
+		emailChanged = true
+	}
 	if req.DisabledAt != nil {
 		if *req.DisabledAt == "" {
 			updates["disabled_at"] = nil
@@ -208,11 +255,11 @@ func UpdateUser(c *gin.Context) {
 		}
 	}
 
-	if disabling {
+	if disabling || emailChanged {
 		db.DB().Model(&models.RefreshToken{}).
 			Where("user_id = ? AND revoked_at IS NULL", id).
 			Update("revoked_at", time.Now())
-		logger.Info("Revoked all refresh tokens for disabled user: %s", id)
+		logger.Info("Revoked all refresh tokens for user %s (disabled=%v, email_changed=%v)", id, disabling, emailChanged)
 	}
 
 	logger.Info("User updated: %s", id)
@@ -298,7 +345,7 @@ func AcceptInvite(c *gin.Context) {
 		return
 	}
 
-	nome := req.Nome
+	nome := strings.TrimSpace(req.Nome)
 	if nome == "" {
 		nome = invite.Email
 	}

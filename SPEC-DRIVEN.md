@@ -1,6 +1,6 @@
-# LoginBuskar / base-login — Spec-Driven Design (pré-código)
+# LoginBuskar / Janus — Spec-Driven Design (pré-código)
 
-**Repo:** https://github.com/newsand/base-login  
+**Repo:** https://github.com/newsand/janus  
 **Produto:** serviço de identidade JWT (sem redirect, sem roles)  
 **Canônico de produto:** `AUTH-MVP.md` (mesma pasta / raiz do repo)
 
@@ -39,7 +39,8 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 
 - No startup: logar **versão do código** (ex. git describe / `VERSION` file).
 - `GET /health` (ou `/v1/health`): liveness + **version = alfa** (string explícita `alfa` / `alpha` conforme README).
-- Env: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `JWT_SECRET`, `SERVICE_KEYS` (dual), TTLs, mailer stub, bootstrap opcional.
+- Env: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS` (dual), TTLs, mailer stub, bootstrap opcional.
+- **Segredos na inicialização (fechado):** com `DEV_ENV=true` (modo dev) nada é exigido — valores padrão e chaves curtas valem, para teste local. Com `DEV_ENV` ausente/vazio/`false` (**padrão = produção**) o serviço **não sobe** se `JWT_SECRET` tiver menos de **45 caracteres** ou se `SERVICE_KEYS` estiver vazio ou tiver qualquer chave com menos de 45 caracteres. Sem valor padrão aceito em produção (o antigo `change-me-in-production` só funciona em dev).
 
 ## 6. Entregáveis no repo
 
@@ -65,6 +66,36 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
   serviço precisa devolver o valor pra quem chamou poder entregá-lo de outro jeito (ex.:
   montar o link do magic-link). Com `MAILER_STUB=false` o campo `token` não existe na
   resposta — o token volta a ser estritamente OOB, hash-only no DB como sempre foi.
+
+- **`GET /v1/users` é paginado, 100 por página** (`?page=N`, a partir de 1). Ordenação
+  `created_at DESC, id DESC` (id desempata para as fronteiras de página ficarem estáveis).
+  A resposta mantém `users` e acrescenta `page`, `page_size`, `total`, `total_pages`.
+  `page` inválido → `400`; página além da última → lista vazia. Substitui o antigo corte
+  fixo nas 100 contas mais recentes (que não estava especificado). Não há busca por
+  e-mail: quem precisa achar um e-mail percorre as páginas.
+
+- **Login tem uma única falha de autenticação** (`401 invalid credentials`) para usuário
+  inexistente, sem senha, senha errada e conta desabilitada; `account disabled` saiu da
+  resposta de login (e do refresh, que devolve `invalid refresh token`). Sempre um bcrypt
+  por tentativa (hash dummy de mesmo custo quando não há hash real). Senha errada conta no
+  lockout, inclusive em conta desabilitada; senha certa em conta desabilitada não emite
+  token nem mexe no lockout. Contrato completo em `AUTH-MVP.md` §7 ("Login — falha de
+  autenticação é uma só"). Substitui o comportamento anterior, em que `account disabled`
+  saía antes da senha e fora do lockout.
+
+- **`nome` é aparado e nunca vazio.** `POST /v1/users` e `PATCH /v1/users/:id` aplicam
+  `strings.TrimSpace` antes de validar (`binding:"required"` sozinho só barra `""`, deixava
+  `"   "` passar, e o PATCH aceitava até vazio). Vazio ou só espaços → `400`; o valor gravado
+  é o aparado. No accept do convite, nome vazio após o trim cai para o e-mail.
+
+- **Trocar `email` via `PATCH /v1/users/:id` revoga todos os refresh tokens do usuário**
+  (igual ao bloqueio por `disabled_at`). Motivo: o e-mail é identidade/canal de recuperação;
+  sessões abertas com o e-mail antigo não devem sobreviver à troca. `nome`/`telefone`/`cpf`
+  não revogam. Não há endpoint avulso de revogação — o bloqueio por segurança é o mecanismo.
+  Access JWT já emitido vale até expirar (limitação aceita). Teste:
+  `TestUpdateUserEmailChangeRevokesRefreshTokens`.
+
+- **`DEV_ENV` + validação de segredos.** Antes o `JWT_SECRET` caía em `change-me-in-production` e o compose injetava `key1,key2` sem aviso: um deploy esquecido subia com segredo público (qualquer um forjaria JWT / usaria a service key). Agora o padrão é produção estrita; ver §5. Só o Janus; o crazy-back não foi alterado.
 
 ## 9. Integração por produtos consumidores
 

@@ -27,6 +27,8 @@
 
 Campos MVP: `id` (**UUID v4** opaco, gerado na criação), `email` (único), `password_hash` (nullable até accept), `nome`, `telefone` (opcional), `cpf` (opcional), `2fa_enabled` (bool, default `false`), `2fa_secret` (nullable), `created_at`, `updated_at`, `disabled_at` (nullable).
 
+**`nome` nunca é vazio (fechado).** Na criação (`POST /users`) e na atualização (`PATCH /users/:id`) o `nome` passa por `TrimSpace` **antes** da validação: vazio ou só espaços → `400`; espaços nas pontas são removidos e o valor aparado é o gravado. No accept de convite o `nome` é opcional e, se ficar vazio depois do trim, vira o próprio e-mail.
+
 **Sem coluna `roles`.** Papéis vivem nos produtos que consomem o JWT (`sub` = uuid).
 
 **UUID:** todo user recebe UUID v4 na criação. **Não** embutir e-mail/tenant/papel dentro do UUID (vazamento + colisão + não rotaciona). Metadados vão em campos/tabelas; o `sub` do JWT é só o UUID. Se precisar ordenação temporal depois, ULID é ADR separado — MVP = UUID v4.
@@ -122,10 +124,36 @@ Nesta versão: pode entregar só o **schema + ramo off completo** e o ramo on co
 - `GET /me`  
 - `POST /password/forgot`  
 - `POST /password/reset`  
-- CRUD usuários (service key): `GET/POST /users`, `GET/PATCH /users/:id` (disable via `disabled_at`)
+- CRUD usuários (service key): `GET /users?page=N` (paginado, 100 por página; resposta `users`, `page`, `page_size`, `total`, `total_pages`), `POST /users`, `GET/PATCH /users/:id` (disable via `disabled_at`; **disable e troca de `email` revogam todos os refresh tokens do user** — não há endpoint avulso de revogação)
 - Invite: `POST /invites`, `POST /invites/accept`
 - Magic link: `POST /auth/magic-link` (pede e-mail), `POST /auth/magic-link/consume` (token one-shot → JWT)
 - (opcional v0.1) `POST /auth/2fa/verify`, `POST /me/2fa/enable|disable`
+
+### Login — falha de autenticação é uma só (fechado)
+
+`POST /auth/login` tem **um único resultado de falha**. Usuário inexistente, usuário sem
+senha (convite não aceito), senha errada e conta desabilitada respondem o **mesmo status,
+o mesmo código e o mesmo corpo**: `401 {"error":"invalid credentials"}`. A mensagem
+`account disabled` **não existe** na resposta de login (nem em refresh: usuário desabilitado
+no refresh responde `401 invalid refresh token`). Nenhum campo, header ou código separa
+"desabilitada" de "senha errada".
+
+Ordem de avaliação:
+
+1. **Lockout na frente.** Estourou → `429 account temporarily locked`, igual para e-mail
+   conhecido e desconhecido.
+2. **Sempre exatamente um bcrypt.** Sem usuário ou sem hash, compara-se contra um hash
+   *dummy* de mesmo custo (cost 12), para o tempo de resposta não separar os casos.
+3. Usuário inexistente, sem senha ou senha errada (conta ativa **ou** desabilitada) →
+   `401 invalid credentials` **e `RecordFailedAttempt`** (conta no lockout).
+4. Senha certa e conta ativa → sessão (e `ClearLockout`).
+5. Senha certa e `disabled_at != null` → **não emite token**, **não incrementa nem zera**
+   o lockout, mesma resposta `401 invalid credentials`.
+
+Motivo: devolver `account disabled` antes da senha confirma que o e-mail existe e está
+desativado; devolvê-lo só *depois* da senha certa ainda enumera (confirma o palpite). O
+custo — o usuário legítimo desativado vê só "credenciais inválidas" — é aceito; avisos de
+desativação vão por e-mail, não pela resposta de login.
 
 ### Magic link (fechado)
 
@@ -158,12 +186,20 @@ Sem redirects / sem OAuth bounce. Cada front/sistema tem a própria tela de logi
 
 ---
 
+### Segredos (fechado)
+
+`JWT_SECRET` e cada chave de `SERVICE_KEYS` têm **mínimo de 45 caracteres** em produção; o serviço não inicia se não cumprirem (nem com `SERVICE_KEYS` vazio). Com `DEV_ENV=true` (modo dev, só teste local) não há exigência. `DEV_ENV` ausente ou `false` = produção.
+
 ## 8. Critérios de aceite desta página
 
 1. Job = identidade via JWT; **sem roles** neste serviço — autorização nos produtos.  
 2. Refresh: TTL + rotação + reuse → revoke família.  
 3. Recover: one-shot + TTL + e-mail OOB + revoke refresh no reset.  
 4. 2FA off não quebra login; 2FA on não emite access sem 2º fator.
+5. Login: os quatro casos de falha (inexistente, sem senha, senha errada, desabilitada)
+   têm o mesmo status e o mesmo corpo; senha errada em conta desabilitada conta no
+   lockout, senha certa não conta.
+6. Sem `DEV_ENV=true`, o serviço não inicia com `JWT_SECRET` ou qualquer service key abaixo de 45 caracteres.
 
 ---
 

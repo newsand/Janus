@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ type Config struct {
 	LockoutThreshold  int
 	LockoutDuration   time.Duration
 	MailerStub        bool
+	DevEnv            bool
 	Version           string
 }
 
@@ -49,10 +51,38 @@ func Load() *Config {
 		LockoutThreshold:  getIntEnv("LOCKOUT_THRESHOLD", 5),
 		LockoutDuration:   getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
 		MailerStub:        getBoolEnv("MAILER_STUB", true),
+		DevEnv:            getBoolEnv("DEV_ENV", false),
 		Version:           "alfa",
 	}
 
 	return cfg
+}
+
+// MinSecretLength is the minimum length of JWT_SECRET and of every service key
+// outside dev mode.
+const MinSecretLength = 45
+
+// Validate enforces secret strength. With DEV_ENV=true nothing is required
+// (defaults and short keys are fine for local testing); otherwise (the default)
+// JWT_SECRET and every SERVICE_KEYS entry must have at least MinSecretLength
+// characters, and SERVICE_KEYS must not be empty. Called from main only, so
+// tests that call Load() without secrets keep working.
+func (c *Config) Validate() error {
+	if c.DevEnv {
+		return nil
+	}
+	if len(c.JWTSecret) < MinSecretLength {
+		return fmt.Errorf("JWT_SECRET must have at least %d characters (got %d); set DEV_ENV=true only for local testing", MinSecretLength, len(c.JWTSecret))
+	}
+	if len(c.ServiceKeys) == 0 {
+		return fmt.Errorf("SERVICE_KEYS must not be empty; set DEV_ENV=true only for local testing")
+	}
+	for i, k := range c.ServiceKeys {
+		if len(k) < MinSecretLength {
+			return fmt.Errorf("SERVICE_KEYS entry #%d must have at least %d characters (got %d); set DEV_ENV=true only for local testing", i+1, MinSecretLength, len(k))
+		}
+	}
+	return nil
 }
 
 func Get() *Config {

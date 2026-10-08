@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/logger"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/logger"
 )
 
 type Claims struct {

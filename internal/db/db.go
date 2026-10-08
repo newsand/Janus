@@ -3,7 +3,7 @@ package db
 import (
 	"time"
 
-	"github.com/newsand/base-login/internal/logger"
+	"github.com/newsand/janus/internal/logger"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"

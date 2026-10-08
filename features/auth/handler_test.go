@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/newsand/base-login/internal/config"
-	"github.com/newsand/base-login/internal/db"
-	"github.com/newsand/base-login/internal/models"
+	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -251,5 +251,90 @@ func TestLoginDisabledUserRejected(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("login for disabled user should return 401, got %d", w.Code)
+	}
+}
+
+func loginRequest(router *gin.Engine, email, password string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	req := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// All authentication failures must be indistinguishable: same status, same body.
+func TestLoginFailuresAreIndistinguishable(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.RateLimitRequests = 1000
+	cfg.LockoutThreshold = 1000
+	router := setupTestRouter()
+
+	createTestUser(t, "active@example.com", "password123")
+	disabled := createTestUser(t, "disabled-ind@example.com", "password123")
+	db.DB().Model(disabled).Update("disabled_at", time.Now())
+	pending := &models.User{Email: "pending@example.com", Nome: "Pending"}
+	db.DB().Create(pending)
+
+	cases := map[string]*httptest.ResponseRecorder{
+		"unknown email":              loginRequest(router, "ghost@example.com", "password123"),
+		"no password set":            loginRequest(router, "pending@example.com", "password123"),
+		"wrong password":             loginRequest(router, "active@example.com", "wrong-password"),
+		"disabled, wrong password":   loginRequest(router, "disabled-ind@example.com", "wrong-password"),
+		"disabled, correct password": loginRequest(router, "disabled-ind@example.com", "password123"),
+	}
+
+	want := cases["unknown email"]
+	for name, w := range cases {
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: expected 401, got %d", name, w.Code)
+		}
+		if w.Body.String() != want.Body.String() {
+			t.Errorf("%s: body %q differs from %q", name, w.Body.String(), want.Body.String())
+		}
+		if w.Body.String() != `{"error":"invalid credentials"}` {
+			t.Errorf("%s: unexpected body %q", name, w.Body.String())
+		}
+		if len(w.Header()) != len(want.Header()) {
+			t.Errorf("%s: headers differ: %v vs %v", name, w.Header(), want.Header())
+		}
+	}
+}
+
+func TestLoginLockoutCountsWrongPasswordOnDisabledOnly(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.RateLimitRequests = 1000
+	cfg.LockoutThreshold = 3
+	cfg.LockoutDuration = time.Minute
+	router := setupTestRouter()
+
+	// Correct password on a disabled account never counts toward the lockout.
+	disabled := createTestUser(t, "lock-disabled-ok@example.com", "password123")
+	db.DB().Model(disabled).Update("disabled_at", time.Now())
+	for i := 0; i < 5; i++ {
+		if w := loginRequest(router, "lock-disabled-ok@example.com", "password123"); w.Code != http.StatusUnauthorized {
+			t.Fatalf("correct password on disabled account must stay 401, got %d at attempt %d", w.Code, i)
+		}
+	}
+
+	// Wrong password on a disabled account does count, ending in 429.
+	other := createTestUser(t, "lock-disabled-bad@example.com", "password123")
+	db.DB().Model(other).Update("disabled_at", time.Now())
+	var last int
+	for i := 0; i < 4; i++ {
+		last = loginRequest(router, "lock-disabled-bad@example.com", "wrong").Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after repeated wrong passwords on a disabled account, got %d", last)
+	}
+
+	// Unknown emails lock out too, so 429 does not reveal which emails exist.
+	for i := 0; i < 4; i++ {
+		last = loginRequest(router, "nobody@example.com", "wrong").Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for unknown email after repeated failures, got %d", last)
 	}
 }
