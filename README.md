@@ -2,6 +2,19 @@
   <img src="assets/cover.jpg" alt="Janus" width="720">
 </p>
 
+## Documentation
+
+Full integration guide: **[newsand.github.io/LaBottega/janus](https://newsand.github.io/LaBottega/janus/)** (in Portuguese).
+
+It walks a consuming product through the whole path: integration architecture, configuration
+and secrets, the auth flows (login, refresh, logout, `/me`), validating the JWT in your own
+backend without a round-trip, mapping identity to your own roles, user CRUD with the service
+key, invite and login magic links, password recovery, 2FA, errors/rate limit/lockout, plus an
+integration checklist and a quick endpoint reference.
+
+Janus is part of **[La Bottega Caporali de Andrade](https://github.com/newsand/LaBottega)**,
+the workshop that gathers these open-source projects and hosts their documentation.
+
 # Janus - Identity Service
 
 JWT authentication service for identity verification. No roles, no redirect — issues JWTs to prove who users are.
@@ -241,6 +254,8 @@ Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, 
 ## Client Integration
 
 See **[INTEGRATION.md](INTEGRATION.md)** for the client integration guide — covers all auth flows (login, refresh, 2FA, password recovery, invite, magic link), token storage recommendations, error reference, and anti-patterns checklist.
+
+The published guide at **[newsand.github.io/LaBottega/janus](https://newsand.github.io/LaBottega/janus/)** covers the same ground from the integrating product's side, with end-to-end examples (in Portuguese).
 
 ## Specs
 

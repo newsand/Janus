@@ -100,6 +100,6 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 ## 9. Integração por produtos consumidores
 
 Todo produto que usa este serviço para identidade (roles/dados ficam no produto, nunca
-aqui) deve seguir o guia em `../doc-integracao/`, que documenta o padrão de integração
+aqui) deve seguir o guia publicado em https://newsand.github.io/LaBottega/janus/, que documenta o padrão de integração
 usado pelo `crazy-back`/`crazy-front` (JWT com segredo compartilhado, service key só no
 backend do produto, fluxo de invite/magic-link ponta a ponta).
