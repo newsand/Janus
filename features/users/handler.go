@@ -3,6 +3,7 @@ package users
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,19 @@ import (
 )
 
 const BcryptCost = 12
+
+var g_CPFPattern = regexp.MustCompile(`^(\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2})$`)
+
+func validCPF(p_CPF *string) bool {
+	if p_CPF == nil {
+		return true
+	}
+	trimmed := strings.TrimSpace(*p_CPF)
+	if trimmed == "" {
+		return true
+	}
+	return g_CPFPattern.MatchString(trimmed)
+}
 
 func RegisterRoutes(r *gin.RouterGroup) {
 	users := r.Group("/users")
@@ -76,6 +90,10 @@ func CreateUser(c *gin.Context) {
 	req.Nome = strings.TrimSpace(req.Nome)
 	if req.Nome == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": "nome must not be blank"})
+		return
+	}
+	if !validCPF(req.CPF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cpf invalid"})
 		return
 	}
 
@@ -236,6 +254,10 @@ func UpdateUser(c *gin.Context) {
 		updates["telefone"] = *req.Telefone
 	}
 	if req.CPF != nil {
+		if !validCPF(req.CPF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cpf invalid"})
+			return
+		}
 		updates["cpf"] = *req.CPF
 	}
 	disabling := false
