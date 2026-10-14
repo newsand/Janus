@@ -39,7 +39,7 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 
 - No startup: logar **versão do código** (ex. git describe / `VERSION` file).
 - `GET /health` (ou `/v1/health`): liveness + **version = alfa** (string explícita `alfa` / `alpha` conforme README).
-- Env: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS` (dual), TTLs, mailer stub, bootstrap opcional.
+- Env: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS` (dual), TTLs, mailer (`MAILER_STUB`, `SMTP_*`, `MAIL_FROM_*`, `APP_BASE_URL`, `MAILER_WORKER_INTERVAL`, `MAILER_MAX_ATTEMPTS`), bootstrap opcional. Com `MAILER_STUB=false` e não-dev, Validate exige SMTP + `APP_BASE_URL`.
 - **Segredos na inicialização (fechado):** com `DEV_ENV=true` (modo dev) nada é exigido — valores padrão e chaves curtas valem, para teste local. Com `DEV_ENV` ausente/vazio/`false` (**padrão = produção**) o serviço **não sobe** se `JWT_SECRET` tiver menos de **45 caracteres** ou se `SERVICE_KEYS` estiver vazio ou tiver qualquer chave com menos de 45 caracteres. Sem valor padrão aceito em produção (o antigo `change-me-in-production` só funciona em dev).
 
 ## 6. Entregáveis no repo
@@ -102,6 +102,7 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 ## 9. Integração por produtos consumidores
 
 Todo produto que usa este serviço para identidade (roles/dados ficam no produto, nunca
-aqui) deve seguir o guia publicado em https://newsand.github.io/LaBottega/janus/, que documenta o padrão de integração
-usado pelo `crazy-back`/`crazy-front` (JWT com segredo compartilhado, service key só no
-backend do produto, fluxo de invite/magic-link ponta a ponta).
+aqui) deve seguir [`INTEGRATION.md`](INTEGRATION.md) neste repo (e o guia publicado em
+https://newsand.github.io/LaBottega/janus/ quando alinhado). Padrão: JWT com segredo
+compartilhado; service key **só** no backend do produto; invite / magic-link / forgot
+com `subject`/`body` + `{{link}}`; consume/accept/reset públicos no front.

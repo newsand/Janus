@@ -40,7 +40,7 @@ Senha: hash forte (Argon2id ou bcrypt cost alto). Nunca plaintext.
 **Sem signup público aberto.** Contas entram por:
 
 1. **CRUD** (`/users` — create/read/update/disable; delete = soft `disabled_at`) — só **service key** (não há role admin neste serviço).
-2. **Invite** — admin cria convite (e-mail + TTL one-shot) → usuário aceita (define senha ou segue magic link) → conta ativa. Não é cadastro aberto.
+2. **Invite** — backend do produto cria convite (service key + copy de e-mail com `{{link}}` + TTL one-shot) → usuário aceita (define senha) → conta ativa. Não é cadastro aberto.
 3. **Seed/API interna** quando outro sistema provisiona.
 
 Verify-e-mail genérico fora; invite já prova o e-mail do destinatário ao consumir o token.
@@ -110,7 +110,9 @@ Sem essas regras, refresh = access eterno. Implementação deve ter testes para 
 | `false` (default) | email+senha → emite access (`2fa_verified=true`) + refresh |
 | `true` | email+senha → **não** emite access; emite só desafio/ticket de curta duração → após TOTP/código ok → access + refresh |
 
-Nesta versão: pode entregar só o **schema + ramo off completo** e o ramo on como “desafio obrigatório sem bypass”. Se o ramo on não estiver pronto, **não** ligar `2fa_enabled=true` em produção. Nunca emitir access com 2FA on sem o segundo fator.
+Nesta versão: pode entregar só o **schema + ramo off completo** e o ramo on como “desafio obrigatório sem bypass”. Nunca emitir access com 2FA on sem o segundo fator.
+
+**Aviso (fechado):** o ramo 2FA **ainda não é funcional/seguro o bastante para produção**. **Não** ligar `2fa_enabled=true` em prod. Falhas conhecidas neste MVP: (1) usuário **desabilitado** ainda pode receber tokens no fluxo 2FA; (2) **replay** de código TOTP possível; (3) **sem limite** de tentativas no challenge.
 
 **Enable/disable (por usuário):** `2fa_enabled=true` só após TOTP válido na ativação (senão tranca a conta). Disable exige reauth (senha **ou** TOTP) — session roubada não desliga 2FA.
 
@@ -176,9 +178,10 @@ desativação vão por e-mail, não pela resposta de login.
 
 ### Mailer / outbox (fechado)
 
-- Template/copy = produto; `Prepare` (mensagem) valida `{{link}}` e renderiza a URL — invariante da Message.
-- Outbox/worker só persistem e entregam Message já pronta (SMTP ou stub); stub processa na hora após enqueue.
-- Kinds: `invite`, `magic_link`, `recover`.
+- Template/copy = produto (`subject` ≤200, `body` ≤10000, text/plain); Janus **não** embute copy de marca/produto.
+- `Prepare` (mensagem) valida `{{link}}` e renderiza `{APP_BASE_URL}/invite|magic-link|password/reset?token=...` — invariante da Message; faltando placeholder → 422.
+- Outbox (`mail_outbox`) + worker só persistem e entregam Message já pronta; SMTP STARTTLS se `MAILER_STUB=false`; stub processa na hora após enqueue (invite pode devolver `token` no JSON só em stub).
+- Kinds: `invite`, `magic_link`, `recover`. Paths do link fixos; `APP_BASE_URL` vem do env.
 
 ### Bootstrap e quem chama o CRUD (fechado)
 
@@ -207,12 +210,13 @@ Sem redirects / sem OAuth bounce. Cada front/sistema tem a própria tela de logi
    têm o mesmo status e o mesmo corpo; senha errada em conta desabilitada conta no
    lockout, senha certa não conta.
 6. Sem `DEV_ENV=true`, o serviço não inicia com `JWT_SECRET` ou qualquer service key abaixo de 45 caracteres.
+7. Invite / magic-link / forgot: service key + `subject`/`body` com `{{link}}`; copy do produto; entrega via outbox.
 
 ---
 
 ## 9. Banco (fechado)
 
-**Postgres** (fonte da verdade: users, refresh families, invites, magic tokens).  
+**Postgres** (fonte da verdade: users, refresh families, invites, magic tokens, recover tokens, 2FA challenges, `mail_outbox`).  
 Redis opcional só para rate-limit. SQLite rejeitado neste MVP por write path do refresh.
 
 ---

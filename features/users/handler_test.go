@@ -516,3 +516,74 @@ func TestCreateInviteEnqueuesWithLink(t *testing.T) {
 		t.Fatalf("body: %s", row.Body)
 	}
 }
+
+func TestCreateUserCPFValidation(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	post := func(payload map[string]interface{}) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/v1/users", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-service-key")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	base := map[string]interface{}{
+		"email": "cpf1@example.com",
+		"nome":  "User",
+	}
+	if w := post(base); w.Code != http.StatusCreated {
+		t.Fatalf("omit cpf: want 201 got %d %s", w.Code, w.Body.String())
+	}
+
+	base["email"] = "cpf2@example.com"
+	base["cpf"] = "12345678901"
+	if w := post(base); w.Code != http.StatusCreated {
+		t.Fatalf("11 digits: want 201 got %d %s", w.Code, w.Body.String())
+	}
+
+	base["email"] = "cpf3@example.com"
+	base["cpf"] = "123.456.789-01"
+	if w := post(base); w.Code != http.StatusCreated {
+		t.Fatalf("formatted: want 201 got %d %s", w.Code, w.Body.String())
+	}
+
+	base["email"] = "cpf4@example.com"
+	base["cpf"] = "123"
+	w := post(base)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid: want 400 got %d", w.Code)
+	}
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] != "cpf invalid" {
+		t.Fatalf("error=%q", resp["error"])
+	}
+}
+
+func TestUpdateUserCPFInvalid(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	user := &models.User{Email: "cpf-upd@example.com", Nome: "User"}
+	if err := db.DB().Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"cpf": "abc"})
+	req := httptest.NewRequest("PATCH", "/v1/users/"+user.ID, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 got %d %s", w.Code, w.Body.String())
+	}
+}

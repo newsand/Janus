@@ -103,6 +103,8 @@ POST /v1/password/reset      # Reset password with token
 
 ### 2FA
 
+**Not production-ready.** Do not set `2fa_enabled=true` in production. Known MVP gaps: disabled users can still receive tokens via the 2FA flow; TOTP codes can be replayed; no attempt limit on the challenge.
+
 ```
 POST /v1/auth/2fa/verify     # Verify 2FA code during login
 POST /v1/me/2fa/enable       # Enable 2FA (requires JWT)
