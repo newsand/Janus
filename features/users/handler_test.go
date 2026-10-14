@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/newsand/janus/features/auth"
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/mailer"
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
@@ -32,6 +34,7 @@ func setupTestDB(t *testing.T) {
 		&models.Invite{},
 		&models.MagicToken{},
 		&models.TwoFAChallenge{},
+		&mailer.Outbox{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
@@ -447,5 +450,140 @@ func TestUpdateUserEmailChangeRevokesRefreshTokens(t *testing.T) {
 	}
 	if !revoked() {
 		t.Error("email change must revoke refresh tokens")
+	}
+}
+
+func TestCreateInviteRequiresLinkPlaceholder(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	cfg.MailerStub = true
+	mailer.Init(cfg)
+	router := setupTestRouter()
+
+	body, _ := json.Marshal(map[string]string{
+		"email":   "new@example.com",
+		"subject": "Convite",
+		"body":    "sem placeholder",
+	})
+	req := httptest.NewRequest("POST", "/v1/invites", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateInviteEnqueuesWithLink(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	cfg.MailerStub = true
+	cfg.AppBaseURL = "https://app.example.com"
+	mailer.Init(cfg)
+	router := setupTestRouter()
+
+	body, _ := json.Marshal(map[string]string{
+		"email":   "new@example.com",
+		"subject": "Convite Crazy",
+		"body":    "Ola, aceite: {{link}}",
+	})
+	req := httptest.NewRequest("POST", "/v1/invites", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("want 201 got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["token"] == nil {
+		t.Fatal("stub should return token")
+	}
+
+	var row mailer.Outbox
+	if err := db.DB().First(&row).Error; err != nil {
+		t.Fatalf("outbox: %v", err)
+	}
+	if row.Status != mailer.StatusSent {
+		t.Fatalf("status=%s", row.Status)
+	}
+	if !strings.Contains(row.Body, "https://app.example.com/invite?token=") {
+		t.Fatalf("body: %s", row.Body)
+	}
+}
+
+func TestCreateUserCPFValidation(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	post := func(payload map[string]interface{}) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/v1/users", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-service-key")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	base := map[string]interface{}{
+		"email": "cpf1@example.com",
+		"nome":  "User",
+	}
+	if w := post(base); w.Code != http.StatusCreated {
+		t.Fatalf("omit cpf: want 201 got %d %s", w.Code, w.Body.String())
+	}
+
+	base["email"] = "cpf2@example.com"
+	base["cpf"] = "12345678901"
+	if w := post(base); w.Code != http.StatusCreated {
+		t.Fatalf("11 digits: want 201 got %d %s", w.Code, w.Body.String())
+	}
+
+	base["email"] = "cpf3@example.com"
+	base["cpf"] = "123.456.789-01"
+	if w := post(base); w.Code != http.StatusCreated {
+		t.Fatalf("formatted: want 201 got %d %s", w.Code, w.Body.String())
+	}
+
+	base["email"] = "cpf4@example.com"
+	base["cpf"] = "123"
+	w := post(base)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid: want 400 got %d", w.Code)
+	}
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] != "cpf invalid" {
+		t.Fatalf("error=%q", resp["error"])
+	}
+}
+
+func TestUpdateUserCPFInvalid(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	router := setupTestRouter()
+
+	user := &models.User{Email: "cpf-upd@example.com", Nome: "User"}
+	if err := db.DB().Create(user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"cpf": "abc"})
+	req := httptest.NewRequest("PATCH", "/v1/users/"+user.ID, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 got %d %s", w.Code, w.Body.String())
 	}
 }

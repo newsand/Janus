@@ -642,6 +642,8 @@ HTTP/1.1 200 OK
 
 ## Fluxo: Login com 2FA
 
+**Aviso:** o 2FA do Janus **ainda não é funcional/seguro o bastante para produção**. **Não** habilite `2fa_enabled=true` em prod. Falhas conhecidas neste MVP: usuário desabilitado ainda pode receber tokens no fluxo 2FA; replay de TOTP possível; sem limite de tentativas no challenge.
+
 Quando o usuário tem 2FA habilitado, o login retorna um `challenge_token` ao invés de tokens. O cliente deve coletar o código TOTP e enviá-lo.
 
 ### Passos
@@ -719,27 +721,32 @@ HTTP/1.1 200 OK
 
 ## Fluxo: Recuperação de Senha
 
+O **browser não chama** `/password/forgot` no Janus. O front do produto pede ao **backend do produto**; esse backend chama o Janus com **service key** e fornece a copy do e-mail (`subject` + `body` com `{{link}}`).
+
 ### Passos
 
-1. Usuário clica "Esqueci minha senha"
-2. POST `/v1/password/forgot` com email
-3. **Resposta sempre sucesso** (não revela se email existe)
-4. Se email existe, usuário recebe link OOB (email) com token
-5. Usuário clica no link, front extrai o token
-6. POST `/v1/password/reset` com token + nova senha
+1. Usuário clica "Esqueci minha senha" no produto
+2. Backend do produto POST `/v1/password/forgot` (service key) com `email`, `subject`, `body`
+3. Janus valida `{{link}}` (ausente → 422); se ok, **resposta sempre 200 genérico** (não revela se email existe)
+4. Se o user existe: gera token, `Prepare` injeta o link, enfileira outbox → e-mail OOB
+5. Usuário clica no link; front do produto extrai o token
+6. POST `/v1/password/reset` (público) com token + nova senha
 7. Todos os refresh tokens são revogados → usuário deve fazer login novamente
 
-### Request — Forgot
+### Request — Forgot (service key)
 
 ```bash
 curl -X POST https://auth.example.com/v1/password/forgot \
+  -H "Authorization: Bearer <service_key>" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "usuario@exemplo.com"
+    "email": "usuario@exemplo.com",
+    "subject": "Redefinir senha",
+    "body": "Ola,\n\nRedefina sua senha: {{link}}\n"
   }'
 ```
 
-### Response — Forgot (sempre 200)
+### Response — Forgot (200 genérico se request válido)
 
 ```http
 HTTP/1.1 200 OK
@@ -749,6 +756,12 @@ HTTP/1.1 200 OK
   "message": "if the email exists, a recovery link will be sent"
 }
 ```
+
+| HTTP | Causa |
+|------|-------|
+| 401 | Service key ausente/inválida |
+| 400 | JSON inválido / campos obrigatórios ausentes |
+| 422 | `body` sem `{{link}}` |
 
 ### Request — Reset
 
@@ -784,17 +797,32 @@ HTTP/1.1 200 OK
 
 ## Fluxo: Invite (Accept)
 
-Convites são criados por sistemas externos via service key. O usuário recebe um link OOB (email) e aceita definindo sua senha.
+Convites são criados pelo **backend do produto** via service key. O produto envia `subject` + `body` (com `{{link}}`); o Janus só injeta a URL do convite e entrega OOB (outbox/SMTP ou stub).
 
 ### Passos
 
-1. Admin/sistema cria invite via `POST /v1/invites` (service key)
+1. Backend cria invite via `POST /v1/invites` (service key + copy do e-mail)
 2. Usuário recebe email com link contendo token
 3. Front coleta senha (obrigatória) e nome (opcional)
-4. POST `/v1/invites/accept` com token + password + nome
+4. POST `/v1/invites/accept` (público) com token + password + nome
 5. Conta ativada → usuário pode fazer login
 
-### Request
+### Request — Criar invite (service key)
+
+```bash
+curl -X POST https://auth.example.com/v1/invites \
+  -H "Authorization: Bearer <service_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "novo@exemplo.com",
+    "subject": "Convite",
+    "body": "Ola,\n\nAceite o convite: {{link}}\n"
+  }'
+```
+
+Com `MAILER_STUB=true`, a resposta 201 pode incluir `token` e `expires_at` (só para dev). Com SMTP real, o token fica só no e-mail.
+
+### Request — Accept (público)
 
 ```bash
 curl -X POST https://auth.example.com/v1/invites/accept \
@@ -829,11 +857,15 @@ HTTP/1.1 200 OK
 | 409 | `{"error": "account already exists"}` | Conta já existe com senha definida |
 | 500 | `{"error": "internal error"}` | Erro interno |
 
+Erros típicos ao **criar** invite: `401` (service key), `400` (request), `422` (sem `{{link}}`), `500` (DB/enqueue).
+
 ---
 
 ## Fluxo: Magic Link
 
 Magic link permite login sem senha para usuários existentes com senha já definida.
+
+O **browser não chama** `/auth/magic-link` no Janus. O produto faz proxy com service key e manda a copy do e-mail (`subject`/`body` com `{{link}}`). O consume permanece público.
 
 ### Restrições
 
@@ -843,24 +875,28 @@ Magic link permite login sem senha para usuários existentes com senha já defin
 
 ### Passos
 
-1. Usuário informa email
-2. POST `/v1/auth/magic-link` → **sempre 200** (não revela se email existe)
-3. Se email existe, usuário recebe link OOB (email)
-4. Front extrai token e POST `/v1/auth/magic-link/consume`
-5. **Se 2FA desabilitado:** recebe tokens → autenticado
-6. **Se 2FA habilitado:** recebe `requires_2fa` → segue para verificação TOTP
+1. Usuário informa email no produto
+2. Backend do produto POST `/v1/auth/magic-link` (service key + `subject`/`body`)
+3. Janus: sem `{{link}}` → 422; senão **sempre 200** genérico (não revela se email existe)
+4. Se email existe e elegível: token + outbox → e-mail OOB
+5. Front extrai token e POST `/v1/auth/magic-link/consume` (público)
+6. **Se 2FA desabilitado:** recebe tokens → autenticado
+7. **Se 2FA habilitado:** recebe `requires_2fa` → segue para verificação TOTP
 
-### Request — Solicitar Magic Link
+### Request — Solicitar Magic Link (service key)
 
 ```bash
 curl -X POST https://auth.example.com/v1/auth/magic-link \
+  -H "Authorization: Bearer <service_key>" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "usuario@exemplo.com"
+    "email": "usuario@exemplo.com",
+    "subject": "Seu link de acesso",
+    "body": "Entre aqui: {{link}}\n"
   }'
 ```
 
-### Response — Solicitar (sempre 200)
+### Response — Solicitar (200 genérico se request válido)
 
 ```http
 HTTP/1.1 200 OK
@@ -920,34 +956,27 @@ Após receber `requires_2fa`, siga o [Fluxo 2FA](#fluxo-login-com-2fa) com o `ch
 ### Diagrama de Sequência
 
 ```
-┌────────┐          ┌────────────┐          ┌───────┐
-│ Client │          │ Janus      │          │ Email │
-└───┬────┘          └─────┬──────┘          └───┬───┘
-    │  POST /v1/auth/magic-link                 │
-    │  {email}            │                     │
-    │────────────────────>│                     │
-    │                     │                     │
-    │  {"message":        │  [se existe]        │
-    │   "if the email..."}│  envia magic link   │
-    │<────────────────────│────────────────────>│
-    │                     │                     │
-    │                     │                     │
-    │  Usuário clica link │                     │
-    │<─────────────────────────────────────────│
-    │                     │                     │
-    │  POST /v1/auth/magic-link/consume         │
-    │  {token}            │                     │
-    │────────────────────>│                     │
-    │                     │                     │
-    │  [sem 2FA]          │                     │
-    │  {access_token...}  │                     │
-    │<────────────────────│                     │
-    │                     │                     │
-    │  [com 2FA]          │                     │
-    │  {requires_2fa,     │                     │
-    │   challenge_token}  │                     │
-    │<────────────────────│                     │
-    ▼                     ▼                     ▼
+┌────────┐     ┌─────────────┐     ┌────────────┐     ┌───────┐
+│ Client │     │ Product BFF │     │ Janus      │     │ Email │
+└───┬────┘     └──────┬──────┘     └─────┬──────┘     └───┬───┘
+    │  pede magic     │                  │                │
+    │────────────────>│                  │                │
+    │                 │ POST /magic-link │                │
+    │                 │ service key +    │                │
+    │                 │ email/subject/   │                │
+    │                 │ body {{link}}    │                │
+    │                 │─────────────────>│                │
+    │                 │ 200 genérico     │ outbox→SMTP    │
+    │                 │<─────────────────│───────────────>│
+    │  ok             │                  │                │
+    │<────────────────│                  │                │
+    │  clica link     │                  │                │
+    │<──────────────────────────────────────────────────│
+    │ POST /magic-link/consume {token}   │                │
+    │───────────────────────────────────>│                │
+    │ {access...} ou {requires_2fa...}   │                │
+    │<───────────────────────────────────│                │
+    ▼                 ▼                  ▼                ▼
 ```
 
 ---
@@ -956,7 +985,7 @@ Após receber `requires_2fa`, siga o [Fluxo 2FA](#fluxo-login-com-2fa) com o `ch
 
 **⚠️ CRÍTICO: Service keys NUNCA devem estar no browser, app mobile, ou qualquer código client-side.**
 
-Service keys são segredos de máquina para sistemas backend chamarem CRUD e invite. Se vazarem, um atacante pode criar/desabilitar usuários arbitrários.
+Service keys são segredos de máquina para o backend do produto chamar CRUD, invites e pedidos de e-mail (magic-link / password-forgot). Se vazarem, um atacante pode criar/desabilitar usuários e disparar e-mails com copy arbitrária no From do Janus.
 
 ### Uso Correto
 
@@ -977,7 +1006,13 @@ Service keys são segredos de máquina para sistemas backend chamarem CRUD e inv
 - `GET /v1/users` — listar usuários
 - `GET /v1/users/:id` — obter usuário
 - `PATCH /v1/users/:id` — atualizar/desabilitar usuário
-- `POST /v1/invites` — criar convite
+- `POST /v1/invites` — criar convite (`email` + `subject` + `body` com `{{link}}`)
+- `POST /v1/auth/magic-link` — pedir magic link (`email` + `subject` + `body` com `{{link}}`)
+- `POST /v1/password/forgot` — pedir recover (`email` + `subject` + `body` com `{{link}}`)
+
+### E-mail: template do produto
+
+O Janus **não** tem copy de produto hardcoded. O backend envia `subject`/`body`; o body **deve** conter `{{link}}` (Janus substitui pela URL com token). Sem placeholder → `422`. Entrega via `mail_outbox` + worker (SMTP) ou stub em dev.
 
 ### Exemplo Server-Side (Node.js)
 
@@ -992,9 +1027,13 @@ async function createInvite(email) {
       'Authorization': `Bearer ${SERVICE_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({
+      email,
+      subject: 'Convite',
+      body: 'Ola,\n\nAceite: {{link}}\n',
+    }),
   });
-  
+
   return response.json();
 }
 ```
@@ -1032,7 +1071,8 @@ Quando um admin desabilita um usuário via `PATCH /v1/users/:id` com `disabled_a
 | `missing authorization header` | Qualquer protegido | Header `Authorization` ausente |
 | `invalid authorization header` | Qualquer protegido | Formato inválido (esperado: `Bearer <token>`) |
 | `invalid token` | Qualquer com JWT | JWT inválido, expirado, ou assinatura incorreta |
-| `invalid service key` | CRUD/Invites | Service key não reconhecida |
+| `invalid service key` | CRUD / invites / magic-link / forgot | Service key não reconhecida |
+| (422) `body must contain {{link}}` | invites / magic-link / forgot | Template do produto sem placeholder |
 | `invalid credentials` | Login, 2FA disable | Email/senha incorretos |
 | `account disabled` | Login, Refresh | Conta desabilitada |
 | `invalid refresh token` | Refresh | Token não encontrado ou já usado |

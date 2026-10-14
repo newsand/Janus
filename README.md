@@ -57,7 +57,16 @@ All settings via environment variables:
 | `MAGIC_LINK_TTL` | `15m` | Magic link expiry |
 | `INVITE_TTL` | `168h` | Invite token expiry (7 days) |
 | `RECOVER_TTL` | `1h` | Password recovery token expiry |
-| `MAILER_STUB` | `true` | Log emails to console (set `false` for real mailer) |
+| `MAILER_STUB` | `true` | Log emails to console (set `false` for real SMTP) |
+| `SMTP_HOST` | - | SMTP host (required when `MAILER_STUB=false`) |
+| `SMTP_PORT` | `587` | SMTP port (STARTTLS) |
+| `SMTP_USER` | - | SMTP username |
+| `SMTP_PASS` | - | SMTP password / app password (spaces allowed) |
+| `MAIL_FROM_NAME` | `Janus` | Display name on From |
+| `MAIL_FROM_EMAIL` | - | From address (required when `MAILER_STUB=false`) |
+| `APP_BASE_URL` | - | Base URL for invite / magic-link / recover links (required when `MAILER_STUB=false`) |
+| `MAILER_WORKER_INTERVAL` | `2s` | Outbox poll interval (real SMTP only) |
+| `MAILER_MAX_ATTEMPTS` | `5` | Max delivery attempts per outbox row |
 
 ## API Endpoints
 
@@ -78,19 +87,23 @@ Returns `{"status":"ok","version":"alfa","database":"ok"}`.
 POST /v1/auth/login          # Email + password → JWT
 POST /v1/auth/refresh        # Refresh token → new JWT pair
 POST /v1/auth/logout         # Revoke refresh tokens (requires JWT)
-POST /v1/auth/magic-link     # Request magic link
+POST /v1/auth/magic-link     # Request magic link (service key; subject+body with {{link}})
 POST /v1/auth/magic-link/consume  # Consume magic link token
 GET  /v1/me                  # Get current user info (requires JWT)
 ```
 
+Product frontends must not call magic-link or password/forgot directly — the product backend proxies with a service key and supplies the email copy (`subject`/`body`).
+
 ### Password Recovery
 
 ```
-POST /v1/password/forgot     # Request recovery email
+POST /v1/password/forgot     # Request recovery email (service key; subject+body with {{link}})
 POST /v1/password/reset      # Reset password with token
 ```
 
 ### 2FA
+
+**Not production-ready.** Do not set `2fa_enabled=true` in production. Known MVP gaps: disabled users can still receive tokens via the 2FA flow; TOTP codes can be replayed; no attempt limit on the challenge.
 
 ```
 POST /v1/auth/2fa/verify     # Verify 2FA code during login
@@ -119,7 +132,7 @@ curl -H "Authorization: Bearer <access_token>" http://localhost:8080/v1/me
 
 ### Service Key
 
-For user CRUD and invite creation:
+For user CRUD, invites, magic-link request, and password/forgot:
 
 ```bash
 curl -H "Authorization: Bearer <service_key>" http://localhost:8080/v1/users
@@ -166,11 +179,13 @@ curl -X POST http://localhost:8080/v1/auth/refresh \
 
 ### Create Invite
 
+The product supplies the email copy. `body` must contain `{{link}}` (Janus replaces it with the invite URL). Missing placeholder → `422`.
+
 ```bash
 curl -X POST http://localhost:8080/v1/invites \
   -H "Authorization: Bearer your-service-key" \
   -H "Content-Type: application/json" \
-  -d '{"email":"newuser@example.com"}'
+  -d '{"email":"newuser@example.com","subject":"Convite Crazy","body":"Ola,\n\nAceite: {{link}}\n"}'
 ```
 
 Response (`MAILER_STUB=true`, the default in dev/docker-compose):
@@ -178,10 +193,11 @@ Response (`MAILER_STUB=true`, the default in dev/docker-compose):
 {"message":"invite sent","email":"newuser@example.com","token":"a1b2c3...","expires_at":"2026-09-24T16:17:21Z"}
 ```
 
-`token` and `expires_at` are only present when `MAILER_STUB=true` — the mailer isn't real, so
-the caller needs the raw token back to deliver it itself (e.g. build a magic-link URL). With a
-real mailer configured (`MAILER_STUB=false`), the token stays out-of-band and the response is
-just `{"message":"invite sent","email":"..."}`. Never rely on the `token` field in production.
+`token` and `expires_at` are only present when `MAILER_STUB=true`. With `MAILER_STUB=false`, the message is queued in `mail_outbox` and delivered by the worker; the response is just `{"message":"invite sent","email":"..."}`. Never rely on the `token` field in production.
+
+### Magic link / password forgot (service key)
+
+Same shape: `email`, `subject`, `body` with `{{link}}`. Always returns a generic 200 body (no email enumeration).
 
 ### Accept Invite
 

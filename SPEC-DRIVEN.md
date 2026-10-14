@@ -39,7 +39,7 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 
 - No startup: logar **versão do código** (ex. git describe / `VERSION` file).
 - `GET /health` (ou `/v1/health`): liveness + **version = alfa** (string explícita `alfa` / `alpha` conforme README).
-- Env: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS` (dual), TTLs, mailer stub, bootstrap opcional.
+- Env: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS` (dual), TTLs, mailer (`MAILER_STUB`, `SMTP_*`, `MAIL_FROM_*`, `APP_BASE_URL`, `MAILER_WORKER_INTERVAL`, `MAILER_MAX_ATTEMPTS`), bootstrap opcional. Com `MAILER_STUB=false` e não-dev, Validate exige SMTP + `APP_BASE_URL`.
 - **Segredos na inicialização (fechado):** com `DEV_ENV=true` (modo dev) nada é exigido — valores padrão e chaves curtas valem, para teste local. Com `DEV_ENV` ausente/vazio/`false` (**padrão = produção**) o serviço **não sobe** se `JWT_SECRET` tiver menos de **45 caracteres** ou se `SERVICE_KEYS` estiver vazio ou tiver qualquer chave com menos de 45 caracteres. Sem valor padrão aceito em produção (o antigo `change-me-in-production` só funciona em dev).
 
 ## 6. Entregáveis no repo
@@ -97,9 +97,12 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 
 - **`DEV_ENV` + validação de segredos.** Antes o `JWT_SECRET` caía em `change-me-in-production` e o compose injetava `key1,key2` sem aviso: um deploy esquecido subia com segredo público (qualquer um forjaria JWT / usaria a service key). Agora o padrão é produção estrita; ver §5. Só o Janus; o crazy-back não foi alterado.
 
+- **Mailer: outbox + template do produto.** Copy do e-mail **não** vive no Janus: `POST /invites`, `POST /auth/magic-link` e `POST /password/forgot` exigem `subject` + `body` (text/plain; subject ≤200, body ≤10000) com placeholder obrigatório `{{link}}`. Validação e `render` de `{{link}}` → URL (`{APP_BASE_URL}/invite|magic-link|password/reset?token=...`) acontecem em `Prepare` da mensagem (`internal/mailer`); sem `{{link}}` (ou sobra após render) → `422`. Outbox/worker são caixa-preta: só enfileiram e entregam `Message` já pronta (SMTP STARTTLS se `MAILER_STUB=false`; stub processa na hora). Invite: falha de enqueue (DB) → 500; SMTP não bloqueia a resposta. Magic/forgot: resposta genérica anti-enumeração inalterada. **Breaking:** magic-link e forgot exigem **service key**. Com stub, invite ainda devolve `token`/`expires_at` no JSON.
+
 ## 9. Integração por produtos consumidores
 
 Todo produto que usa este serviço para identidade (roles/dados ficam no produto, nunca
-aqui) deve seguir o guia publicado em https://newsand.github.io/LaBottega/janus/, que documenta o padrão de integração
-usado pelo `crazy-back`/`crazy-front` (JWT com segredo compartilhado, service key só no
-backend do produto, fluxo de invite/magic-link ponta a ponta).
+aqui) deve seguir [`INTEGRATION.md`](INTEGRATION.md) neste repo (e o guia publicado em
+https://newsand.github.io/LaBottega/janus/ quando alinhado). Padrão: JWT com segredo
+compartilhado; service key **só** no backend do produto; invite / magic-link / forgot
+com `subject`/`body` + `{{link}}`; consume/accept/reset públicos no front.

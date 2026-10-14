@@ -40,7 +40,7 @@ Senha: hash forte (Argon2id ou bcrypt cost alto). Nunca plaintext.
 **Sem signup público aberto.** Contas entram por:
 
 1. **CRUD** (`/users` — create/read/update/disable; delete = soft `disabled_at`) — só **service key** (não há role admin neste serviço).
-2. **Invite** — admin cria convite (e-mail + TTL one-shot) → usuário aceita (define senha ou segue magic link) → conta ativa. Não é cadastro aberto.
+2. **Invite** — backend do produto cria convite (service key + copy de e-mail com `{{link}}` + TTL one-shot) → usuário aceita (define senha) → conta ativa. Não é cadastro aberto.
 3. **Seed/API interna** quando outro sistema provisiona.
 
 Verify-e-mail genérico fora; invite já prova o e-mail do destinatário ao consumir o token.
@@ -95,9 +95,9 @@ Sem essas regras, refresh = access eterno. Implementação deve ter testes para 
 
 ## 5. Recover password (fechado)
 
-1. `POST /password/forgot` com email → **sempre** responde 204/200 genérico (não vaza se email existe).  
+1. `POST /password/forgot` (**service key**) com `email` + `subject` + `body` (body deve conter `{{link}}`) → **sempre** responde 204/200 genérico (não vaza se email existe). Chamada pelo backend do produto, não pelo browser.  
 2. Se user existe: gera token **one-shot** (opaco, só hash no DB), TTL **1 hora**, invalida tokens de recover anteriores do user.  
-3. Entrega **out-of-band** (e-mail). Canal concreto = dependência de infra; contrato da API e do token ficam fechados mesmo se o mailer for stub em dev.  
+3. Entrega **out-of-band** (e-mail): `Prepare` valida/`render` de `{{link}}`, depois outbox + worker/SMTP. Template/copy = produto; canal = mailer do Janus (stub em dev).  
 4. `POST /password/reset` com token + nova senha → valida one-shot + TTL → troca hash → **consome** token → revoga **todas** as famílias de refresh do user.  
 5. Sem token válido / expirado / reusado → erro genérico.
 
@@ -110,7 +110,9 @@ Sem essas regras, refresh = access eterno. Implementação deve ter testes para 
 | `false` (default) | email+senha → emite access (`2fa_verified=true`) + refresh |
 | `true` | email+senha → **não** emite access; emite só desafio/ticket de curta duração → após TOTP/código ok → access + refresh |
 
-Nesta versão: pode entregar só o **schema + ramo off completo** e o ramo on como “desafio obrigatório sem bypass”. Se o ramo on não estiver pronto, **não** ligar `2fa_enabled=true` em produção. Nunca emitir access com 2FA on sem o segundo fator.
+Nesta versão: pode entregar só o **schema + ramo off completo** e o ramo on como “desafio obrigatório sem bypass”. Nunca emitir access com 2FA on sem o segundo fator.
+
+**Aviso (fechado):** o ramo 2FA **ainda não é funcional/seguro o bastante para produção**. **Não** ligar `2fa_enabled=true` em prod. Falhas conhecidas neste MVP: (1) usuário **desabilitado** ainda pode receber tokens no fluxo 2FA; (2) **replay** de código TOTP possível; (3) **sem limite** de tentativas no challenge.
 
 **Enable/disable (por usuário):** `2fa_enabled=true` só após TOTP válido na ativação (senão tranca a conta). Disable exige reauth (senha **ou** TOTP) — session roubada não desliga 2FA.
 
@@ -122,11 +124,11 @@ Nesta versão: pode entregar só o **schema + ramo off completo** e o ramo on co
 - `POST /auth/refresh`  
 - `POST /auth/logout`  
 - `GET /me`  
-- `POST /password/forgot`  
+- `POST /password/forgot` (service key; `email` + `subject` + `body` com `{{link}}`)  
 - `POST /password/reset`  
 - CRUD usuários (service key): `GET /users?page=N` (paginado, 100 por página; resposta `users`, `page`, `page_size`, `total`, `total_pages`), `POST /users`, `GET/PATCH /users/:id` (disable via `disabled_at`; **disable e troca de `email` revogam todos os refresh tokens do user** — não há endpoint avulso de revogação)
-- Invite: `POST /invites`, `POST /invites/accept`
-- Magic link: `POST /auth/magic-link` (pede e-mail), `POST /auth/magic-link/consume` (token one-shot → JWT)
+- Invite: `POST /invites` (service key; `email` + `subject` + `body` com `{{link}}`), `POST /invites/accept`
+- Magic link: `POST /auth/magic-link` (service key; `email` + `subject` + `body` com `{{link}}`), `POST /auth/magic-link/consume` (token one-shot → JWT; público)
 - (opcional v0.1) `POST /auth/2fa/verify`, `POST /me/2fa/enable|disable`
 
 ### Login — falha de autenticação é uma só (fechado)
@@ -159,26 +161,34 @@ desativação vão por e-mail, não pela resposta de login.
 
 - **Não cria conta.** Só user **já existente** e ativo; senão bypass de invite.
 - Token opaco one-shot, TTL curto (**15 min**), só hash no DB.
-- Pedido sempre genérico (não vaza se e-mail existe) + rate limit.
+- Pedido (**service key** + `subject`/`body` com `{{link}}`) sempre genérico na resposta (não vaza se e-mail existe) + rate limit. Front do produto não chama o Janus direto.
 - User **sem senha definida** (só convidado, ainda não accept): magic **bloqueado** até accept do invite (evita conta zumbi).
 - Consume → emite access+refresh; se `2fa_enabled`, ainda exige TOTP antes do access.
 - Sem redirect OAuth; o front abre deep-link/URL própria e posta o token na API.
 
 ### Invite (fechado)
 
-- One-shot + TTL (**7 dias**); e-mail OOB; só hash no DB.
+- One-shot + TTL (**7 dias**); e-mail OOB via outbox; só hash no DB.
+- Request (service key): `email` + `subject` + `body`; `{{link}}` obrigatório no body → 422 se ausente.
 - Token **amarra o e-mail**: accept com outro e-mail = rejeita.
 - Novo invite para o mesmo e-mail **invalida** invites anteriores desse e-mail.
 - Accept: cria/ativa user, define senha (obrigatório no accept se ainda sem senha); depois login ou magic liberados.
 - Invite ≠ signup público: só quem recebeu token entra.
 - Até o accept, login por senha falha (sem hash) e magic fica bloqueado.
 
+### Mailer / outbox (fechado)
+
+- Template/copy = produto (`subject` ≤200, `body` ≤10000, text/plain); Janus **não** embute copy de marca/produto.
+- `Prepare` (mensagem) valida `{{link}}` e renderiza `{APP_BASE_URL}/invite|magic-link|password/reset?token=...` — invariante da Message; faltando placeholder → 422.
+- Outbox (`mail_outbox`) + worker só persistem e entregam Message já pronta; SMTP STARTTLS se `MAILER_STUB=false`; stub processa na hora após enqueue (invite pode devolver `token` no JSON só em stub).
+- Kinds: `invite`, `magic_link`, `recover`. Paths do link fixos; `APP_BASE_URL` vem do env.
+
 ### Bootstrap e quem chama o CRUD (fechado)
 
 - **Sem role admin neste serviço.** Não existe “user admin” no Janus.
-- **Service key:** segredo de máquina (não é senha de pessoa) que Vistoria/ops usam pra chamar CRUD e invite. Header `Authorization: Bearer <service_key>`.
+- **Service key:** segredo de máquina (não é senha de pessoa) que o backend do produto usa pra CRUD, invite, magic-link e password/forgot. Header `Authorization: Bearer <service_key>`.
 - **Bootstrap:** só configurar a service key (env); user seed opcional sem privilégio extra. CRUD nunca abre por JWT de usuário.
-- **Key hygiene (fechado):** no mínimo **duas keys** ativas (current + previous) pra rotação sem downtime; revogar a antiga após trocar; escopo implícito do MVP = só mutações de user/invite neste serviço (não é JWT assinado pra fronts). Logar uso da key sem logar o valor.
+- **Key hygiene (fechado):** no mínimo **duas keys** ativas (current + previous) pra rotação sem downtime; revogar a antiga após trocar; escopo implícito do MVP = mutações de user/invite/mail neste serviço (não é JWT assinado pra fronts). Logar uso da key sem logar o valor.
 - Produtos mapeiam `sub` → papéis no **próprio** banco.
 
 
@@ -200,12 +210,13 @@ Sem redirects / sem OAuth bounce. Cada front/sistema tem a própria tela de logi
    têm o mesmo status e o mesmo corpo; senha errada em conta desabilitada conta no
    lockout, senha certa não conta.
 6. Sem `DEV_ENV=true`, o serviço não inicia com `JWT_SECRET` ou qualquer service key abaixo de 45 caracteres.
+7. Invite / magic-link / forgot: service key + `subject`/`body` com `{{link}}`; copy do produto; entrega via outbox.
 
 ---
 
 ## 9. Banco (fechado)
 
-**Postgres** (fonte da verdade: users, refresh families, invites, magic tokens).  
+**Postgres** (fonte da verdade: users, refresh families, invites, magic tokens, recover tokens, 2FA challenges, `mail_outbox`).  
 Redis opcional só para rate-limit. SQLite rejeitado neste MVP por write path do refresh.
 
 ---

@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,9 +13,11 @@ import (
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/mailer"
 	"github.com/newsand/janus/internal/middleware"
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 func RegisterRoutes(r *gin.RouterGroup) {
@@ -23,7 +27,7 @@ func RegisterRoutes(r *gin.RouterGroup) {
 		auth.POST("/login", Login)
 		auth.POST("/refresh", Refresh)
 		auth.POST("/logout", middleware.JWTAuth(), Logout)
-		auth.POST("/magic-link", RequestMagicLink)
+		auth.POST("/magic-link", middleware.ServiceKeyAuth(), RequestMagicLink)
 		auth.POST("/magic-link/consume", ConsumeMagicLink)
 	}
 
@@ -44,7 +48,9 @@ type RefreshRequest struct {
 }
 
 type MagicLinkRequest struct {
-	Email string `json:"email" binding:"required,email"`
+	Email   string `json:"email" binding:"required,email"`
+	Subject string `json:"subject" binding:"required,max=200"`
+	Body    string `json:"body" binding:"required,max=10000"`
 }
 
 type MagicLinkConsumeRequest struct {
@@ -229,34 +235,43 @@ func GetMe(c *gin.Context) {
 func RequestMagicLink(c *gin.Context) {
 	var req MagicLinkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a magic link will be sent"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if !strings.Contains(req.Body, mailer.LinkPlaceholder) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": mailer.ErrMissingLink.Error()})
 		return
 	}
 
+	generic := gin.H{"message": "if the email exists, a magic link will be sent"}
+
 	var user models.User
 	if err := db.DB().Where("email = ?", req.Email).First(&user).Error; err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a magic link will be sent"})
+		c.JSON(http.StatusOK, generic)
 		return
 	}
 
 	if user.DisabledAt != nil || user.PasswordHash == nil {
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a magic link will be sent"})
+		c.JSON(http.StatusOK, generic)
 		return
 	}
 
-	token, err := createMagicToken(user.ID)
+	err := db.DB().Transaction(func(p_Tx *gorm.DB) error {
+		token, err := createMagicTokenTx(p_Tx, user.ID)
+		if err != nil {
+			return err
+		}
+		return mailer.EnqueueMagicLink(p_Tx, user.Email, req.Subject, req.Body, token)
+	})
+	if errors.Is(err, mailer.ErrMissingLink) || errors.Is(err, mailer.ErrTooLong) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
-		logger.Error("Failed to create magic token: %v", err)
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a magic link will be sent"})
-		return
+		logger.Error("Failed to enqueue magic link: %v", err)
 	}
 
-	cfg := config.Get()
-	if cfg.MailerStub {
-		logger.Info("[MAILER STUB] Magic link for %s: %s", user.Email, token)
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a magic link will be sent"})
+	c.JSON(http.StatusOK, generic)
 }
 
 func ConsumeMagicLink(c *gin.Context) {
@@ -357,21 +372,23 @@ func issueTokensWithFamily(userID, familyID string) (gin.H, error) {
 	}, nil
 }
 
-func createMagicToken(userID string) (string, error) {
+func createMagicTokenTx(p_Tx *gorm.DB, p_UserID string) (string, error) {
 	cfg := config.Get()
 
-	db.DB().Model(&models.MagicToken{}).
-		Where("user_id = ? AND used_at IS NULL", userID).
-		Update("used_at", time.Now())
+	if err := p_Tx.Model(&models.MagicToken{}).
+		Where("user_id = ? AND used_at IS NULL", p_UserID).
+		Update("used_at", time.Now()).Error; err != nil {
+		return "", err
+	}
 
 	opaqueToken := models.GenerateOpaqueToken()
 	magic := models.MagicToken{
-		UserID:    userID,
+		UserID:    p_UserID,
 		TokenHash: models.HashToken(opaqueToken),
 		ExpiresAt: time.Now().Add(cfg.MagicLinkTTL),
 	}
 
-	if err := db.DB().Create(&magic).Error; err != nil {
+	if err := p_Tx.Create(&magic).Error; err != nil {
 		return "", err
 	}
 

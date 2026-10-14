@@ -1,7 +1,9 @@
 package users
 
 import (
+	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -10,12 +12,27 @@ import (
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/mailer"
 	"github.com/newsand/janus/internal/middleware"
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 const BcryptCost = 12
+
+var g_CPFPattern = regexp.MustCompile(`^(\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2})$`)
+
+func validCPF(p_CPF *string) bool {
+	if p_CPF == nil {
+		return true
+	}
+	trimmed := strings.TrimSpace(*p_CPF)
+	if trimmed == "" {
+		return true
+	}
+	return g_CPFPattern.MatchString(trimmed)
+}
 
 func RegisterRoutes(r *gin.RouterGroup) {
 	users := r.Group("/users")
@@ -51,7 +68,9 @@ type UpdateUserRequest struct {
 }
 
 type CreateInviteRequest struct {
-	Email string `json:"email" binding:"required,email"`
+	Email   string `json:"email" binding:"required,email"`
+	Subject string `json:"subject" binding:"required,max=200"`
+	Body    string `json:"body" binding:"required,max=10000"`
 }
 
 type AcceptInviteRequest struct {
@@ -71,6 +90,10 @@ func CreateUser(c *gin.Context) {
 	req.Nome = strings.TrimSpace(req.Nome)
 	if req.Nome == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": "nome must not be blank"})
+		return
+	}
+	if !validCPF(req.CPF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cpf invalid"})
 		return
 	}
 
@@ -231,6 +254,10 @@ func UpdateUser(c *gin.Context) {
 		updates["telefone"] = *req.Telefone
 	}
 	if req.CPF != nil {
+		if !validCPF(req.CPF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cpf invalid"})
+			return
+		}
 		updates["cpf"] = *req.CPF
 	}
 	disabling := false
@@ -274,19 +301,31 @@ func CreateInvite(c *gin.Context) {
 	}
 
 	cfg := config.Get()
-
-	db.DB().Model(&models.Invite{}).
-		Where("email = ? AND used_at IS NULL", req.Email).
-		Update("used_at", time.Now())
-
 	opaqueToken := models.GenerateOpaqueToken()
-	invite := models.Invite{
-		Email:     req.Email,
-		TokenHash: models.HashToken(opaqueToken),
-		ExpiresAt: time.Now().Add(cfg.InviteTTL),
-	}
+	var invite models.Invite
 
-	if err := db.DB().Create(&invite).Error; err != nil {
+	err := db.DB().Transaction(func(p_Tx *gorm.DB) error {
+		if err := p_Tx.Model(&models.Invite{}).
+			Where("email = ? AND used_at IS NULL", req.Email).
+			Update("used_at", time.Now()).Error; err != nil {
+			return err
+		}
+
+		invite = models.Invite{
+			Email:     req.Email,
+			TokenHash: models.HashToken(opaqueToken),
+			ExpiresAt: time.Now().Add(cfg.InviteTTL),
+		}
+		if err := p_Tx.Create(&invite).Error; err != nil {
+			return err
+		}
+		return mailer.EnqueueInvite(p_Tx, req.Email, req.Subject, req.Body, opaqueToken)
+	})
+	if errors.Is(err, mailer.ErrMissingLink) || errors.Is(err, mailer.ErrTooLong) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
 		logger.Error("Failed to create invite: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -296,12 +335,7 @@ func CreateInvite(c *gin.Context) {
 		"message": "invite sent",
 		"email":   req.Email,
 	}
-
 	if cfg.MailerStub {
-		logger.Info("[MAILER STUB] Invite for %s: %s", req.Email, opaqueToken)
-		// Mailer is stubbed (no real OOB delivery), so the caller needs the
-		// token back to be able to hand it to the invitee itself. Never
-		// returned when a real mailer is configured — token stays OOB then.
 		response["token"] = opaqueToken
 		response["expires_at"] = invite.ExpiresAt
 	}
