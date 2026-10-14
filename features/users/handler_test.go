@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/newsand/janus/features/auth"
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/mailer"
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
@@ -32,6 +34,7 @@ func setupTestDB(t *testing.T) {
 		&models.Invite{},
 		&models.MagicToken{},
 		&models.TwoFAChallenge{},
+		&mailer.Outbox{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
@@ -447,5 +450,69 @@ func TestUpdateUserEmailChangeRevokesRefreshTokens(t *testing.T) {
 	}
 	if !revoked() {
 		t.Error("email change must revoke refresh tokens")
+	}
+}
+
+func TestCreateInviteRequiresLinkPlaceholder(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	cfg.MailerStub = true
+	mailer.Init(cfg)
+	router := setupTestRouter()
+
+	body, _ := json.Marshal(map[string]string{
+		"email":   "new@example.com",
+		"subject": "Convite",
+		"body":    "sem placeholder",
+	})
+	req := httptest.NewRequest("POST", "/v1/invites", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateInviteEnqueuesWithLink(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	cfg.MailerStub = true
+	cfg.AppBaseURL = "https://app.example.com"
+	mailer.Init(cfg)
+	router := setupTestRouter()
+
+	body, _ := json.Marshal(map[string]string{
+		"email":   "new@example.com",
+		"subject": "Convite Crazy",
+		"body":    "Ola, aceite: {{link}}",
+	})
+	req := httptest.NewRequest("POST", "/v1/invites", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("want 201 got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["token"] == nil {
+		t.Fatal("stub should return token")
+	}
+
+	var row mailer.Outbox
+	if err := db.DB().First(&row).Error; err != nil {
+		t.Fatalf("outbox: %v", err)
+	}
+	if row.Status != mailer.StatusSent {
+		t.Fatalf("status=%s", row.Status)
+	}
+	if !strings.Contains(row.Body, "https://app.example.com/invite?token=") {
+		t.Fatalf("body: %s", row.Body)
 	}
 }

@@ -1,16 +1,20 @@
 package password
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/mailer"
 	"github.com/newsand/janus/internal/middleware"
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 const BcryptCost = 12
@@ -19,13 +23,15 @@ func RegisterRoutes(r *gin.RouterGroup) {
 	pwd := r.Group("/password")
 	pwd.Use(middleware.RateLimit())
 	{
-		pwd.POST("/forgot", Forgot)
+		pwd.POST("/forgot", middleware.ServiceKeyAuth(), Forgot)
 		pwd.POST("/reset", Reset)
 	}
 }
 
 type ForgotRequest struct {
-	Email string `json:"email" binding:"required,email"`
+	Email   string `json:"email" binding:"required,email"`
+	Subject string `json:"subject" binding:"required,max=200"`
+	Body    string `json:"body" binding:"required,max=10000"`
 }
 
 type ResetRequest struct {
@@ -36,45 +42,55 @@ type ResetRequest struct {
 func Forgot(c *gin.Context) {
 	var req ForgotRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a recovery link will be sent"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if !strings.Contains(req.Body, mailer.LinkPlaceholder) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": mailer.ErrMissingLink.Error()})
 		return
 	}
 
+	generic := gin.H{"message": "if the email exists, a recovery link will be sent"}
 	cfg := config.Get()
 
 	var user models.User
 	if err := db.DB().Where("email = ?", req.Email).First(&user).Error; err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a recovery link will be sent"})
+		c.JSON(http.StatusOK, generic)
 		return
 	}
 
 	if user.DisabledAt != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a recovery link will be sent"})
+		c.JSON(http.StatusOK, generic)
 		return
 	}
-
-	db.DB().Model(&models.RecoverToken{}).
-		Where("user_id = ? AND used_at IS NULL", user.ID).
-		Update("used_at", time.Now())
 
 	opaqueToken := models.GenerateOpaqueToken()
-	recoverToken := models.RecoverToken{
-		UserID:    user.ID,
-		TokenHash: models.HashToken(opaqueToken),
-		ExpiresAt: time.Now().Add(cfg.RecoverTTL),
-	}
+	err := db.DB().Transaction(func(p_Tx *gorm.DB) error {
+		if err := p_Tx.Model(&models.RecoverToken{}).
+			Where("user_id = ? AND used_at IS NULL", user.ID).
+			Update("used_at", time.Now()).Error; err != nil {
+			return err
+		}
 
-	if err := db.DB().Create(&recoverToken).Error; err != nil {
-		logger.Error("Failed to create recovery token: %v", err)
-		c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a recovery link will be sent"})
+		recoverToken := models.RecoverToken{
+			UserID:    user.ID,
+			TokenHash: models.HashToken(opaqueToken),
+			ExpiresAt: time.Now().Add(cfg.RecoverTTL),
+		}
+		if err := p_Tx.Create(&recoverToken).Error; err != nil {
+			return err
+		}
+		return mailer.EnqueueRecover(p_Tx, req.Email, req.Subject, req.Body, opaqueToken)
+	})
+	if errors.Is(err, mailer.ErrMissingLink) || errors.Is(err, mailer.ErrTooLong) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
-
-	if cfg.MailerStub {
-		logger.Info("[MAILER STUB] Recovery token for %s: %s", req.Email, opaqueToken)
+	if err != nil {
+		logger.Error("Failed to enqueue recovery email: %v", err)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a recovery link will be sent"})
+	c.JSON(http.StatusOK, generic)
 }
 
 func Reset(c *gin.Context) {

@@ -14,6 +14,7 @@ import (
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
+	"github.com/newsand/janus/internal/mailer"
 )
 
 func main() {
@@ -33,6 +34,8 @@ func main() {
 		logger.Fatal("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
+
+	mailer.Init(cfg)
 
 	gin.ForceConsoleColor()
 	if cfg.LogLevel != "debug" {
@@ -66,6 +69,7 @@ func main() {
 
 	<-quit
 	logger.Info("Shutting down server...")
+	mailer.Stop()
 }
 
 func requestLogger() gin.HandlerFunc {

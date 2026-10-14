@@ -9,23 +9,32 @@ import (
 )
 
 type Config struct {
-	Port              string
-	DatabaseURL       string
-	LogLevel          string
-	JWTSecret         string
-	ServiceKeys       []string
-	AccessTokenTTL    time.Duration
-	RefreshTokenTTL   time.Duration
-	MagicLinkTTL      time.Duration
-	InviteTTL         time.Duration
-	RecoverTTL        time.Duration
-	RateLimitRequests int
-	RateLimitWindow   time.Duration
-	LockoutThreshold  int
-	LockoutDuration   time.Duration
-	MailerStub        bool
-	DevEnv            bool
-	Version           string
+	Port                 string
+	DatabaseURL          string
+	LogLevel             string
+	JWTSecret            string
+	ServiceKeys          []string
+	AccessTokenTTL       time.Duration
+	RefreshTokenTTL      time.Duration
+	MagicLinkTTL         time.Duration
+	InviteTTL            time.Duration
+	RecoverTTL           time.Duration
+	RateLimitRequests    int
+	RateLimitWindow      time.Duration
+	LockoutThreshold     int
+	LockoutDuration      time.Duration
+	MailerStub           bool
+	SMTPHost             string
+	SMTPPort             string
+	SMTPUser             string
+	SMTPPass             string
+	MailFromName         string
+	MailFromEmail        string
+	AppBaseURL           string
+	MailerWorkerInterval time.Duration
+	MailerMaxAttempts    int
+	DevEnv               bool
+	Version              string
 }
 
 var cfg *Config
@@ -36,23 +45,32 @@ func Load() *Config {
 	}
 
 	cfg = &Config{
-		Port:              getEnv("PORT", "8080"),
-		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/janus?sslmode=disable"),
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
-		JWTSecret:         getEnv("JWT_SECRET", "change-me-in-production"),
-		ServiceKeys:       parseServiceKeys(getEnv("SERVICE_KEYS", "")),
-		AccessTokenTTL:    getDurationEnv("ACCESS_TOKEN_TTL", 15*time.Minute),
-		RefreshTokenTTL:   getDurationEnv("REFRESH_TOKEN_TTL", 14*24*time.Hour),
-		MagicLinkTTL:      getDurationEnv("MAGIC_LINK_TTL", 15*time.Minute),
-		InviteTTL:         getDurationEnv("INVITE_TTL", 7*24*time.Hour),
-		RecoverTTL:        getDurationEnv("RECOVER_TTL", 1*time.Hour),
-		RateLimitRequests: getIntEnv("RATE_LIMIT_REQUESTS", 5),
-		RateLimitWindow:   getDurationEnv("RATE_LIMIT_WINDOW", 1*time.Minute),
-		LockoutThreshold:  getIntEnv("LOCKOUT_THRESHOLD", 5),
-		LockoutDuration:   getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
-		MailerStub:        getBoolEnv("MAILER_STUB", true),
-		DevEnv:            getBoolEnv("DEV_ENV", false),
-		Version:           "alfa",
+		Port:                 getEnv("PORT", "8080"),
+		DatabaseURL:          getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/janus?sslmode=disable"),
+		LogLevel:             getEnv("LOG_LEVEL", "info"),
+		JWTSecret:            getEnv("JWT_SECRET", "change-me-in-production"),
+		ServiceKeys:          parseServiceKeys(getEnv("SERVICE_KEYS", "")),
+		AccessTokenTTL:       getDurationEnv("ACCESS_TOKEN_TTL", 15*time.Minute),
+		RefreshTokenTTL:      getDurationEnv("REFRESH_TOKEN_TTL", 14*24*time.Hour),
+		MagicLinkTTL:         getDurationEnv("MAGIC_LINK_TTL", 15*time.Minute),
+		InviteTTL:            getDurationEnv("INVITE_TTL", 7*24*time.Hour),
+		RecoverTTL:           getDurationEnv("RECOVER_TTL", 1*time.Hour),
+		RateLimitRequests:    getIntEnv("RATE_LIMIT_REQUESTS", 5),
+		RateLimitWindow:      getDurationEnv("RATE_LIMIT_WINDOW", 1*time.Minute),
+		LockoutThreshold:     getIntEnv("LOCKOUT_THRESHOLD", 5),
+		LockoutDuration:      getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
+		MailerStub:           getBoolEnv("MAILER_STUB", true),
+		SMTPHost:             getEnv("SMTP_HOST", ""),
+		SMTPPort:             getEnv("SMTP_PORT", "587"),
+		SMTPUser:             getEnv("SMTP_USER", ""),
+		SMTPPass:             getEnv("SMTP_PASS", ""),
+		MailFromName:         getEnv("MAIL_FROM_NAME", "Janus"),
+		MailFromEmail:        getEnv("MAIL_FROM_EMAIL", ""),
+		AppBaseURL:           getEnv("APP_BASE_URL", ""),
+		MailerWorkerInterval: getDurationEnv("MAILER_WORKER_INTERVAL", 2*time.Second),
+		MailerMaxAttempts:    getIntEnv("MAILER_MAX_ATTEMPTS", 5),
+		DevEnv:               getBoolEnv("DEV_ENV", false),
+		Version:              "alfa",
 	}
 
 	return cfg
@@ -80,6 +98,23 @@ func (c *Config) Validate() error {
 	for i, k := range c.ServiceKeys {
 		if len(k) < MinSecretLength {
 			return fmt.Errorf("SERVICE_KEYS entry #%d must have at least %d characters (got %d); set DEV_ENV=true only for local testing", i+1, MinSecretLength, len(k))
+		}
+	}
+	if !c.MailerStub {
+		if c.SMTPHost == "" {
+			return fmt.Errorf("SMTP_HOST is required when MAILER_STUB=false")
+		}
+		if c.SMTPUser == "" {
+			return fmt.Errorf("SMTP_USER is required when MAILER_STUB=false")
+		}
+		if c.SMTPPass == "" {
+			return fmt.Errorf("SMTP_PASS is required when MAILER_STUB=false")
+		}
+		if c.MailFromEmail == "" {
+			return fmt.Errorf("MAIL_FROM_EMAIL is required when MAILER_STUB=false")
+		}
+		if c.AppBaseURL == "" {
+			return fmt.Errorf("APP_BASE_URL is required when MAILER_STUB=false")
 		}
 	}
 	return nil

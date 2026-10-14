@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
+	"github.com/newsand/janus/internal/mailer"
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
@@ -28,6 +29,7 @@ func setupTestDB(t *testing.T) {
 		&models.RefreshToken{},
 		&models.MagicToken{},
 		&models.TwoFAChallenge{},
+		&mailer.Outbox{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
@@ -336,5 +338,46 @@ func TestLoginLockoutCountsWrongPasswordOnDisabledOnly(t *testing.T) {
 	}
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 for unknown email after repeated failures, got %d", last)
+	}
+}
+
+func TestMagicLinkRequiresServiceKey(t *testing.T) {
+	setupTestDB(t)
+	config.Load()
+	router := setupTestRouter()
+
+	body, _ := json.Marshal(map[string]string{
+		"email":   "u@example.com",
+		"subject": "Magic",
+		"body":    "Link: {{link}}",
+	})
+	req := httptest.NewRequest("POST", "/v1/auth/magic-link", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 without service key, got %d", w.Code)
+	}
+}
+
+func TestMagicLinkRejectsMissingPlaceholder(t *testing.T) {
+	setupTestDB(t)
+	cfg := config.Load()
+	cfg.ServiceKeys = []string{"test-service-key"}
+	mailer.Init(cfg)
+	router := setupTestRouter()
+
+	body, _ := json.Marshal(map[string]string{
+		"email":   "u@example.com",
+		"subject": "Magic",
+		"body":    "sem link",
+	})
+	req := httptest.NewRequest("POST", "/v1/auth/magic-link", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-service-key")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 got %d: %s", w.Code, w.Body.String())
 	}
 }

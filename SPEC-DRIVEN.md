@@ -97,6 +97,8 @@ Ver `AUTH-MVP.md` §1. Resumo: login, refresh (rotação+reuse), logout, recover
 
 - **`DEV_ENV` + validação de segredos.** Antes o `JWT_SECRET` caía em `change-me-in-production` e o compose injetava `key1,key2` sem aviso: um deploy esquecido subia com segredo público (qualquer um forjaria JWT / usaria a service key). Agora o padrão é produção estrita; ver §5. Só o Janus; o crazy-back não foi alterado.
 
+- **Mailer: outbox + template do produto.** Copy do e-mail **não** vive no Janus: `POST /invites`, `POST /auth/magic-link` e `POST /password/forgot` exigem `subject` + `body` (text/plain; subject ≤200, body ≤10000) com placeholder obrigatório `{{link}}`. Validação e `render` de `{{link}}` → URL (`{APP_BASE_URL}/invite|magic-link|password/reset?token=...`) acontecem em `Prepare` da mensagem (`internal/mailer`); sem `{{link}}` (ou sobra após render) → `422`. Outbox/worker são caixa-preta: só enfileiram e entregam `Message` já pronta (SMTP STARTTLS se `MAILER_STUB=false`; stub processa na hora). Invite: falha de enqueue (DB) → 500; SMTP não bloqueia a resposta. Magic/forgot: resposta genérica anti-enumeração inalterada. **Breaking:** magic-link e forgot exigem **service key**. Com stub, invite ainda devolve `token`/`expires_at` no JSON.
+
 ## 9. Integração por produtos consumidores
 
 Todo produto que usa este serviço para identidade (roles/dados ficam no produto, nunca
