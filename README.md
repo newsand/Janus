@@ -235,24 +235,15 @@ docker run -p 8080:8080 \
 # Install Go 1.22+
 go build -o server .
 
-# Run migrations
-psql $DATABASE_URL -f migrations/001_initial.sql
-
-# Start
+# Start (applies pending SQL migrations from migrations/ on boot)
 ./server
 ```
 
 ## Database
 
-Postgres required. SQL migrations used (GORM models match the schema).
+Postgres required. SQL files in `migrations/` are the schema source of truth (GORM models match). On every start the process applies pending versions (tracked in `schema_migrations`), same idea as `manage.py migrate`.
 
-Run migrations before first start:
-
-```bash
-psql $DATABASE_URL -f migrations/001_initial.sql
-```
-
-Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`.
+Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`, `mail_outbox`.
 
 ## Security Notes
 

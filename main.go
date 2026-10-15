@@ -15,6 +15,7 @@ import (
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
 	"github.com/newsand/janus/internal/mailer"
+	"github.com/newsand/janus/migrations"
 )
 
 func main() {
@@ -34,6 +35,10 @@ func main() {
 		logger.Fatal("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
+
+	if err := migrations.Up(db.DB()); err != nil {
+		logger.Fatal("Failed to run migrations: %v", err)
+	}
 
 	mailer.Init(cfg)
 
