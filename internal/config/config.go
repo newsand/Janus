@@ -24,10 +24,13 @@ type Config struct {
 	LockoutThreshold     int
 	LockoutDuration      time.Duration
 	MailerStub           bool
+	MailerProvider       string
 	SMTPHost             string
 	SMTPPort             string
 	SMTPUser             string
 	SMTPPass             string
+	SendPulseUserID      string
+	SendPulseSecret      string
 	MailFromName         string
 	MailFromEmail        string
 	AppBaseURL           string
@@ -60,10 +63,13 @@ func Load() *Config {
 		LockoutThreshold:     getIntEnv("LOCKOUT_THRESHOLD", 5),
 		LockoutDuration:      getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
 		MailerStub:           getBoolEnv("MAILER_STUB", true),
+		MailerProvider:       getEnv("MAILER_PROVIDER", "smtp"),
 		SMTPHost:             getEnv("SMTP_HOST", ""),
 		SMTPPort:             getEnv("SMTP_PORT", "587"),
 		SMTPUser:             getEnv("SMTP_USER", ""),
 		SMTPPass:             getEnv("SMTP_PASS", ""),
+		SendPulseUserID:      getEnv("SENDPULSE_USER_ID", ""),
+		SendPulseSecret:      getEnv("SENDPULSE_SECRET", ""),
 		MailFromName:         getEnv("MAIL_FROM_NAME", "Janus"),
 		MailFromEmail:        getEnv("MAIL_FROM_EMAIL", ""),
 		AppBaseURL:           getEnv("APP_BASE_URL", ""),
@@ -101,14 +107,26 @@ func (c *Config) Validate() error {
 		}
 	}
 	if !c.MailerStub {
-		if c.SMTPHost == "" {
-			return fmt.Errorf("SMTP_HOST is required when MAILER_STUB=false")
-		}
-		if c.SMTPUser == "" {
-			return fmt.Errorf("SMTP_USER is required when MAILER_STUB=false")
-		}
-		if c.SMTPPass == "" {
-			return fmt.Errorf("SMTP_PASS is required when MAILER_STUB=false")
+		switch c.MailerProvider {
+		case "sendpulse":
+			if c.SendPulseUserID == "" {
+				return fmt.Errorf("SENDPULSE_USER_ID is required when MAILER_STUB=false and MAILER_PROVIDER=sendpulse")
+			}
+			if c.SendPulseSecret == "" {
+				return fmt.Errorf("SENDPULSE_SECRET is required when MAILER_STUB=false and MAILER_PROVIDER=sendpulse")
+			}
+		case "smtp", "":
+			if c.SMTPHost == "" {
+				return fmt.Errorf("SMTP_HOST is required when MAILER_STUB=false")
+			}
+			if c.SMTPUser == "" {
+				return fmt.Errorf("SMTP_USER is required when MAILER_STUB=false")
+			}
+			if c.SMTPPass == "" {
+				return fmt.Errorf("SMTP_PASS is required when MAILER_STUB=false")
+			}
+		default:
+			return fmt.Errorf("MAILER_PROVIDER must be smtp or sendpulse (got %q)", c.MailerProvider)
 		}
 		if c.MailFromEmail == "" {
 			return fmt.Errorf("MAIL_FROM_EMAIL is required when MAILER_STUB=false")
