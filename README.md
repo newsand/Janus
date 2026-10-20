@@ -57,16 +57,21 @@ All settings via environment variables:
 | `MAGIC_LINK_TTL` | `15m` | Magic link expiry |
 | `INVITE_TTL` | `168h` | Invite token expiry (7 days) |
 | `RECOVER_TTL` | `1h` | Password recovery token expiry |
-| `MAILER_STUB` | `true` | Log emails to console (set `false` for real SMTP) |
-| `SMTP_HOST` | - | SMTP host (required when `MAILER_STUB=false`) |
+| `MAILER_STUB` | `true` | Log emails to console (set `false` for real delivery) |
+| `MAILER_PROVIDER` | `smtp` | Delivery provider when `MAILER_STUB=false`: `smtp` or `sendpulse` |
+| `SMTP_HOST` | - | SMTP host (required when `MAILER_STUB=false` and `MAILER_PROVIDER=smtp`) |
 | `SMTP_PORT` | `587` | SMTP port (STARTTLS) |
 | `SMTP_USER` | - | SMTP username |
 | `SMTP_PASS` | - | SMTP password / app password (spaces allowed) |
+| `SENDPULSE_USER_ID` | - | SendPulse OAuth `client_id` (required when `MAILER_PROVIDER=sendpulse`) |
+| `SENDPULSE_SECRET` | - | SendPulse OAuth `client_secret` (required when `MAILER_PROVIDER=sendpulse`) |
 | `MAIL_FROM_NAME` | `Janus` | Display name on From |
 | `MAIL_FROM_EMAIL` | - | From address (required when `MAILER_STUB=false`) |
 | `APP_BASE_URL` | - | Base URL for invite / magic-link / recover links (required when `MAILER_STUB=false`) |
-| `MAILER_WORKER_INTERVAL` | `2s` | Outbox poll interval (real SMTP only) |
+| `MAILER_WORKER_INTERVAL` | `2s` | Outbox poll interval (real delivery only) |
 | `MAILER_MAX_ATTEMPTS` | `5` | Max delivery attempts per outbox row |
+
+`MAILER_PROVIDER=sendpulse` sends over SendPulse's HTTPS API (OAuth `client_credentials` + `POST /smtp/emails`) instead of raw SMTP. Use it when the host's outbound SMTP ports (25/465/587/2525) are firewalled — common on cloud VMs — since port 443 is not.
 
 ## API Endpoints
 

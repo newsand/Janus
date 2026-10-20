@@ -37,6 +37,31 @@ func TestValidate(t *testing.T) {
 			JWTSecret: long, ServiceKeys: []string{long}, MailerStub: false,
 			SMTPHost: "smtp.gmail.com", SMTPUser: "u", SMTPPass: "p", MailFromEmail: "u@x.com",
 		}, true},
+		{"prod sendpulse ok", Config{
+			JWTSecret: long, ServiceKeys: []string{long}, MailerStub: false, MailerProvider: "sendpulse",
+			SendPulseUserID: "id", SendPulseSecret: "secret",
+			MailFromEmail: "u@x.com", AppBaseURL: "https://app.example.com",
+		}, false},
+		{"prod sendpulse missing user id", Config{
+			JWTSecret: long, ServiceKeys: []string{long}, MailerStub: false, MailerProvider: "sendpulse",
+			SendPulseSecret: "secret",
+			MailFromEmail:   "u@x.com", AppBaseURL: "https://app.example.com",
+		}, true},
+		{"prod sendpulse missing secret", Config{
+			JWTSecret: long, ServiceKeys: []string{long}, MailerStub: false, MailerProvider: "sendpulse",
+			SendPulseUserID: "id",
+			MailFromEmail:   "u@x.com", AppBaseURL: "https://app.example.com",
+		}, true},
+		{"prod sendpulse doesn't require smtp vars", Config{
+			JWTSecret: long, ServiceKeys: []string{long}, MailerStub: false, MailerProvider: "sendpulse",
+			SendPulseUserID: "id", SendPulseSecret: "secret",
+			SMTPHost:      "",
+			MailFromEmail: "u@x.com", AppBaseURL: "https://app.example.com",
+		}, false},
+		{"prod unknown provider", Config{
+			JWTSecret: long, ServiceKeys: []string{long}, MailerStub: false, MailerProvider: "carrier-pigeon",
+			MailFromEmail: "u@x.com", AppBaseURL: "https://app.example.com",
+		}, true},
 	}
 	for _, c := range cases {
 		err := c.cfg.Validate()

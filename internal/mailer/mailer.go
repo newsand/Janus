@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/internal/logger"
 )
 
 const (
@@ -62,14 +63,7 @@ func Init(p_Cfg *config.Config) {
 		return
 	}
 
-	g_Sender = smtpSender{
-		Host:      p_Cfg.SMTPHost,
-		Port:      p_Cfg.SMTPPort,
-		User:      p_Cfg.SMTPUser,
-		Pass:      p_Cfg.SMTPPass,
-		FromName:  p_Cfg.MailFromName,
-		FromEmail: p_Cfg.MailFromEmail,
-	}
+	g_Sender = newSender(p_Cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g_Cancel = cancel
@@ -78,6 +72,43 @@ func Init(p_Cfg *config.Config) {
 		interval = 2 * time.Second
 	}
 	startWorker(ctx, interval)
+}
+
+// newSender picks the Send Strategy (see `sender` above) for a real (non-stub)
+// mailer, based on MAILER_PROVIDER. Add a new provider by adding a case here
+// and a new sender implementation — the rest of the package (outbox worker,
+// Prepare*, etc.) only ever talks to the `sender` interface.
+func newSender(p_Cfg *config.Config) sender {
+	switch p_Cfg.MailerProvider {
+	case "sendpulse":
+		return &sendpulseSender{
+			UserID:    p_Cfg.SendPulseUserID,
+			Secret:    p_Cfg.SendPulseSecret,
+			FromName:  p_Cfg.MailFromName,
+			FromEmail: p_Cfg.MailFromEmail,
+		}
+	case "smtp", "":
+		return smtpSender{
+			Host:      p_Cfg.SMTPHost,
+			Port:      p_Cfg.SMTPPort,
+			User:      p_Cfg.SMTPUser,
+			Pass:      p_Cfg.SMTPPass,
+			FromName:  p_Cfg.MailFromName,
+			FromEmail: p_Cfg.MailFromEmail,
+		}
+	default:
+		// config.Validate() rejects this outside DevEnv; DevEnv lets an
+		// invalid value through, so fall back to smtp rather than panic.
+		logger.Warn("unknown MAILER_PROVIDER %q, falling back to smtp", p_Cfg.MailerProvider)
+		return smtpSender{
+			Host:      p_Cfg.SMTPHost,
+			Port:      p_Cfg.SMTPPort,
+			User:      p_Cfg.SMTPUser,
+			Pass:      p_Cfg.SMTPPass,
+			FromName:  p_Cfg.MailFromName,
+			FromEmail: p_Cfg.MailFromEmail,
+		}
+	}
 }
 
 func Stop() {
