@@ -51,12 +51,16 @@ All settings via environment variables:
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DEV_ENV` | `false` | `true` = dev mode: no secret strength checks (local testing only). Unset/`false` = production rules below |
 | `JWT_SECRET` | - | **Required in production**: min 45 chars, else the service refuses to start |
-| `SERVICE_KEYS` | - | Comma-separated keys for CRUD API. Min 2 for rotation. In production: not empty, **each key min 45 chars**, else the service refuses to start |
+| `SERVICE_KEYS` | - | Comma-separated keys for the service-key endpoints. Keep 2 active for rotation (recommended, not enforced). In production: not empty, **each key min 45 chars**, else the service refuses to start |
 | `ACCESS_TOKEN_TTL` | `15m` | JWT access token lifetime |
 | `REFRESH_TOKEN_TTL` | `336h` | Refresh token lifetime (14 days) |
 | `MAGIC_LINK_TTL` | `15m` | Magic link expiry |
 | `INVITE_TTL` | `168h` | Invite token expiry (7 days) |
 | `RECOVER_TTL` | `1h` | Password recovery token expiry |
+| `RATE_LIMIT_REQUESTS` | `5` | Max requests per client IP and path within the window (`/v1/auth/*`, `/v1/password/*`, `POST /v1/invites/accept`) |
+| `RATE_LIMIT_WINDOW` | `1m` | Rate-limit window |
+| `LOCKOUT_THRESHOLD` | `5` | Failed logins for one email before it is locked |
+| `LOCKOUT_DURATION` | `15m` | How long a locked email stays locked |
 | `MAILER_STUB` | `true` | Log emails to console (set `false` for real delivery) |
 | `MAILER_PROVIDER` | `smtp` | Delivery provider when `MAILER_STUB=false`: `smtp` or `sendpulse` |
 | `SMTP_HOST` | - | SMTP host (required when `MAILER_STUB=false` and `MAILER_PROVIDER=smtp`) |
@@ -66,10 +70,12 @@ All settings via environment variables:
 | `SENDPULSE_USER_ID` | - | SendPulse OAuth `client_id` (required when `MAILER_PROVIDER=sendpulse`) |
 | `SENDPULSE_SECRET` | - | SendPulse OAuth `client_secret` (required when `MAILER_PROVIDER=sendpulse`) |
 | `MAIL_FROM_NAME` | `Janus` | Display name on From |
-| `MAIL_FROM_EMAIL` | - | From address (required when `MAILER_STUB=false`) |
-| `APP_BASE_URL` | - | Base URL for invite / magic-link / recover links (required when `MAILER_STUB=false`) |
+| `MAIL_FROM_EMAIL` | - | From address (required when `MAILER_STUB=false`). With `sendpulse` it must be a sender verified in your SendPulse account, otherwise delivery fails with `422 Sender is not valid` |
+| `APP_BASE_URL` | - | Base URL for invite / magic-link / recover links: `{APP_BASE_URL}/invite`, `/magic-link`, `/password/reset` (required when `MAILER_STUB=false`; falls back to `http://localhost` if unset) |
 | `MAILER_WORKER_INTERVAL` | `2s` | Outbox poll interval (real delivery only) |
 | `MAILER_MAX_ATTEMPTS` | `5` | Max delivery attempts per outbox row |
+
+With `DEV_ENV=true`, startup validation is skipped entirely, including the mailer requirements above (a bad `MAILER_PROVIDER` falls back to `smtp` with a warning). Outside dev mode, `MAILER_STUB=false` requires: for `smtp`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`; for `sendpulse`, `SENDPULSE_USER_ID`, `SENDPULSE_SECRET`; for both, `MAIL_FROM_EMAIL` and `APP_BASE_URL`. `docker-compose.yml` forces `MAILER_STUB=true`.
 
 `MAILER_PROVIDER=sendpulse` sends over SendPulse's HTTPS API (OAuth `client_credentials` + `POST /smtp/emails`) instead of raw SMTP. Use it when the host's outbound SMTP ports (25/465/587/2525) are firewalled — common on cloud VMs — since port 443 is not.
 
@@ -108,7 +114,7 @@ POST /v1/password/reset      # Reset password with token
 
 ### 2FA
 
-**Not production-ready.** Do not set `2fa_enabled=true` in production. Known MVP gaps: disabled users can still receive tokens via the 2FA flow; TOTP codes can be replayed; no attempt limit on the challenge.
+**Not production-ready.** Do not set `2fa_enabled=true` in production. Known gaps: disabled users can still receive tokens via the 2FA flow; TOTP codes can be replayed; no attempt limit on the challenge.
 
 ```
 POST /v1/auth/2fa/verify     # Verify 2FA code during login
@@ -237,7 +243,7 @@ docker run -p 8080:8080 \
 ### Manual
 
 ```bash
-# Install Go 1.22+
+# Install Go 1.26+
 go build -o server .
 
 # Start (applies pending SQL migrations from migrations/ on boot)
@@ -257,11 +263,11 @@ Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, 
 - **Service Keys**: Rotate keys by adding new key, updating consumers, then removing old key. Constant-time comparison used.
 - **Refresh Tokens**: Stored as SHA-256 hashes. Rotation on each use. Reuse detection revokes entire family (atomic check prevents TOCTOU).
 - **Passwords**: bcrypt cost 12
-- **Rate Limiting**: In-memory per-endpoint. Configure via `RATE_LIMIT_*` vars. **Note:** In-memory counters do not sync across replicas. For multi-replica deployments, implement Redis/DB-backed rate limiting or use an API gateway.
-- **Account Lockout**: In-memory per-account/IP. Configure via `LOCKOUT_*` vars. Same multi-replica caveat as rate limiting.
+- **Rate Limiting**: In-memory, per client IP and path, on `/v1/auth/*`, `/v1/password/*` and `POST /v1/invites/accept`. Configure via `RATE_LIMIT_*` vars. **Note:** In-memory counters do not sync across replicas. For multi-replica deployments, implement Redis/DB-backed rate limiting or use an API gateway.
+- **Account Lockout**: In-memory, login only, keyed by the email as submitted. Configure via `LOCKOUT_*` vars. Same multi-replica caveat as rate limiting.
 - **Login failures**: One failure for everything — unknown email, no password set, wrong password and disabled account all return `401 {"error":"invalid credentials"}` with exactly one bcrypt comparison each (dummy hash when none exists). Wrong password counts toward lockout (disabled accounts included); a correct password on a disabled account issues no token and does not touch the lockout. There is no `account disabled` response.
 - **Session revocation via service key**: `PATCH /users/:id` revokes all of the user's refresh tokens immediately when `disabled_at` is set (security block) **or** when `email` changes. Other fields (`nome`, `telefone`, `cpf`) revoke nothing. There is no standalone "revoke sessions" endpoint — the block is the mechanism.
-- **Soft-disable**: When a user is disabled via `PATCH /users/:id`, all refresh tokens are revoked immediately. However, existing **access JWTs remain valid until their TTL** (~15 min). Middleware does not re-check `disabled_at` on every request in this MVP.
+- **Soft-disable**: When a user is disabled via `PATCH /users/:id`, all refresh tokens are revoked immediately. However, existing **access JWTs remain valid until their TTL** (~15 min). Middleware does not re-check `disabled_at` on every request.
 
 ## Client Integration
 
@@ -271,4 +277,4 @@ The published guide at **[newsand.github.io/LaBottega/janus](https://newsand.git
 
 ## Specs
 
-See `AUTH-MVP.md` for product rules and `SPEC-DRIVEN.md` for architecture decisions.
+The canonical specs live in [`specs/`](specs/): [`specs/auth.md`](specs/auth.md) (behaviour, endpoints, token and flow rules) and [`specs/architecture.md`](specs/architecture.md) (code structure and design decisions).

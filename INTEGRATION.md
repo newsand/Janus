@@ -642,7 +642,7 @@ HTTP/1.1 200 OK
 
 ## Fluxo: Login com 2FA
 
-**Aviso:** o 2FA do Janus **ainda não é funcional/seguro o bastante para produção**. **Não** habilite `2fa_enabled=true` em prod. Falhas conhecidas neste MVP: usuário desabilitado ainda pode receber tokens no fluxo 2FA; replay de TOTP possível; sem limite de tentativas no challenge.
+**Aviso:** o 2FA do Janus **ainda não é funcional/seguro o bastante para produção**. **Não** habilite `2fa_enabled=true` em prod. Falhas conhecidas: usuário desabilitado ainda pode receber tokens no fluxo 2FA; replay de TOTP possível; sem limite de tentativas no challenge.
 
 Quando o usuário tem 2FA habilitado, o login retorna um `challenge_token` ao invés de tokens. O cliente deve coletar o código TOTP e enviá-lo.
 
