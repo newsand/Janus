@@ -18,6 +18,7 @@ import (
 	"github.com/newsand/janus/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func RegisterRoutes(r *gin.RouterGroup) {
@@ -142,6 +143,15 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, tokens)
 }
 
+type refreshRow struct {
+	ID         string     `gorm:"column:id"`
+	UserID     string     `gorm:"column:user_id"`
+	FamilyID   string     `gorm:"column:family_id"`
+	ExpiresAt  time.Time  `gorm:"column:expires_at"`
+	RevokedAt  *time.Time `gorm:"column:revoked_at"`
+	DisabledAt *time.Time `gorm:"column:disabled_at"`
+}
+
 func Refresh(c *gin.Context) {
 	var req RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -150,58 +160,100 @@ func Refresh(c *gin.Context) {
 	}
 
 	tokenHash := models.HashToken(req.RefreshToken)
+	var (
+		tokens   gin.H
+		decision string
+	)
+	err := db.DB().Transaction(func(tx *gorm.DB) error {
+		row, found, err := lockRefresh(tx, tokenHash)
+		if err != nil {
+			return err
+		}
+		if !found {
+			logger.Debug("Refresh token not found")
+			decision = "invalid"
+			return nil
+		}
 
-	var refresh models.RefreshToken
-	if err := db.DB().Where("token_hash = ?", tokenHash).First(&refresh).Error; err != nil {
-		logger.Debug("Refresh token not found: %v", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-		return
-	}
+		if row.RevokedAt != nil {
+			logger.Warn("Reuse detection: revoking family %s", row.FamilyID)
+			if err := revokeFamily(tx, row.FamilyID); err != nil {
+				return err
+			}
+			decision = "invalid"
+			return nil
+		}
 
-	if refresh.RevokedAt != nil {
-		logger.Warn("Reuse detection: revoking family %s", refresh.FamilyID)
-		db.DB().Model(&models.RefreshToken{}).
-			Where("family_id = ? AND revoked_at IS NULL", refresh.FamilyID).
+		if time.Now().After(row.ExpiresAt) {
+			decision = "expired"
+			return nil
+		}
+
+		if row.DisabledAt != nil {
+			decision = "invalid"
+			return nil
+		}
+
+		res := tx.Model(&models.RefreshToken{}).
+			Where("id = ? AND revoked_at IS NULL", row.ID).
 			Update("revoked_at", time.Now())
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-		return
-	}
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			logger.Warn("Reuse detection (TOCTOU): revoking family %s", row.FamilyID)
+			if err := revokeFamily(tx, row.FamilyID); err != nil {
+				return err
+			}
+			decision = "invalid"
+			return nil
+		}
 
-	if time.Now().After(refresh.ExpiresAt) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token expired"})
-		return
-	}
-
-	var user models.User
-	if err := db.DB().First(&user, "id = ?", refresh.UserID).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-		return
-	}
-	if user.DisabledAt != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-		return
-	}
-
-	result := db.DB().Model(&models.RefreshToken{}).
-		Where("id = ? AND revoked_at IS NULL", refresh.ID).
-		Update("revoked_at", time.Now())
-	if result.RowsAffected == 0 {
-		logger.Warn("Reuse detection (TOCTOU): revoking family %s", refresh.FamilyID)
-		db.DB().Model(&models.RefreshToken{}).
-			Where("family_id = ? AND revoked_at IS NULL", refresh.FamilyID).
-			Update("revoked_at", time.Now())
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-		return
-	}
-
-	tokens, err := issueTokensWithFamily(refresh.UserID, refresh.FamilyID)
+		tokens, err = issueTokensOn(tx, row.UserID, row.FamilyID)
+		if err != nil {
+			return err
+		}
+		decision = "ok"
+		return nil
+	})
 	if err != nil {
-		logger.Error("Failed to issue tokens: %v", err)
+		logger.Error("Failed to rotate refresh token: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
-	c.JSON(http.StatusOK, tokens)
+	switch decision {
+	case "ok":
+		c.JSON(http.StatusOK, tokens)
+	case "expired":
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token expired"})
+	default:
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
+	}
+}
+
+func lockRefresh(tx *gorm.DB, tokenHash string) (refreshRow, bool, error) {
+	q := tx.Table("refresh_tokens AS rt").
+		Select("rt.id, rt.user_id, rt.family_id, rt.expires_at, rt.revoked_at, u.disabled_at").
+		Joins("INNER JOIN users AS u ON u.id = rt.user_id").
+		Where("rt.token_hash = ?", tokenHash)
+	if tx.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "rt"}})
+	}
+	var rows []refreshRow
+	if err := q.Scan(&rows).Error; err != nil {
+		return refreshRow{}, false, err
+	}
+	if len(rows) == 0 {
+		return refreshRow{}, false, nil
+	}
+	return rows[0], true, nil
+}
+
+func revokeFamily(tx *gorm.DB, familyID string) error {
+	return tx.Model(&models.RefreshToken{}).
+		Where("family_id = ? AND revoked_at IS NULL", familyID).
+		Update("revoked_at", time.Now()).Error
 }
 
 func Logout(c *gin.Context) {
@@ -333,6 +385,10 @@ func issueTokens(userID string) (gin.H, error) {
 }
 
 func issueTokensWithFamily(userID, familyID string) (gin.H, error) {
+	return issueTokensOn(db.DB(), userID, familyID)
+}
+
+func issueTokensOn(tx *gorm.DB, userID, familyID string) (gin.H, error) {
 	cfg := config.Get()
 
 	jti := uuid.New().String()
@@ -360,7 +416,7 @@ func issueTokensWithFamily(userID, familyID string) (gin.H, error) {
 		ExpiresAt: now.Add(cfg.RefreshTokenTTL),
 	}
 
-	if err := db.DB().Create(&refreshToken).Error; err != nil {
+	if err := tx.Create(&refreshToken).Error; err != nil {
 		return nil, err
 	}
 
