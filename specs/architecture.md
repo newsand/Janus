@@ -19,9 +19,9 @@ See [`auth.md`](auth.md) §1. In short: login, refresh (rotation + reuse detecti
 **Required:**
 
 - Organized **by feature** (`features/auth`, `features/users`, `features/password`, `features/twofa`, `features/health`), not by layer. Each feature has a `handler.go` with `RegisterRoutes(*gin.RouterGroup)`.
-- A thin `main.go`: load config, validate it, init singletons, run migrations, start the mailer, register routes, serve HTTP.
+- A thin `main.go`: load config, validate it, init singletons, run migrations, enable prepared statements, start the mailer, register routes, serve HTTP with the timeouts in §5.
 - **Logger singleton** (`internal/logger`) — no logging library; colored output on stdio; level from `LOG_LEVEL`; `gin.ForceConsoleColor()`.
-- **DB singleton** (`internal/db`) — Postgres through GORM, one connection pool.
+- **DB singleton** (`internal/db`) — Postgres through GORM, one connection pool: 25 open, 25 idle, lifetime 1h, idle time 30m. Idle stays equal to open. Do not raise open above the Postgres `max_connections` budget.
 - **Config singleton** (`internal/config`) and **mailer singleton** (`internal/mailer`), accessed through package-level functions (`config.Get()`, `db.DB()`, `mailer.Init` / `Enqueue*`), not injected.
 - **GORM Active Record** on the models (`internal/models`; the outbox model lives in `internal/mailer`); no ORM/DB-swap abstraction.
 - Gin **router groups** under `/v1` (`/v1/auth`, `/v1/users`, …); `GET /health` is also mounted without prefix.
@@ -42,7 +42,8 @@ Cross-cutting code lives in `internal/middleware` (`JWTAuth`, `ServiceKeyAuth`, 
 - On startup the version is logged; `GET /health` and `GET /v1/health` return liveness, the DB check and `version` (`alfa`).
 - Environment: `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS`, token TTLs, rate limit and lockout settings, and the mailer settings (`MAILER_STUB`, `MAILER_PROVIDER`, `SMTP_*`, `SENDPULSE_*`, `MAIL_FROM_*`, `APP_BASE_URL`, `MAILER_WORKER_INTERVAL`, `MAILER_MAX_ATTEMPTS`). Defaults and the table of each variable are in `README.md`; validation rules are in [`auth.md`](auth.md) §13.
 - **Secrets at startup:** with `DEV_ENV=true` nothing is enforced; with `DEV_ENV` unset/empty/`false` (the default is production) the service does not start if `JWT_SECRET` has fewer than 45 characters or `SERVICE_KEYS` is empty or has any key under 45 characters.
-- Migrations: the SQL files in `migrations/` are embedded and applied on every boot (tracked in `schema_migrations`).
+- Migrations: the SQL files in `migrations/` are embedded and applied on every boot (tracked in `schema_migrations`). Prepared statements are enabled only after that returns (`db.EnablePreparedStatements`). They stay off during migrations.
+- HTTP timeouts, the 1 MiB body cap and shutdown are specified in [`auth.md`](auth.md) §13. Those numbers are the contract; do not retune them in code alone.
 
 ## 6. Repository deliverables
 
@@ -72,6 +73,11 @@ Decisions taken after the first cut, kept here so the code does not look like it
 - **`DEV_ENV` and secret validation.** The default used to be a public secret (`change-me-in-production`) and compose injected `key1,key2`; a forgotten deploy would start with a forgeable JWT secret. The default is now strict production; see §5.
 - **Mailer: outbox + product-owned copy.** `POST /invites`, `POST /auth/magic-link` and `POST /password/forgot` require `subject` + `body` containing `{{link}}`; `Prepare` validates and renders it, and the outbox/worker only enqueue and deliver prepared messages. Magic-link and forgot require a **service key**.
 - **Mailer providers: `smtp` and `sendpulse`** behind one `sender` interface, selected by `MAILER_PROVIDER`. SendPulse exists for hosts that block outbound SMTP ports; it uses the HTTPS API.
+- **Refresh stays one transaction** ([`auth.md`](auth.md) §4). The revoke of the presented token and the insert of the next one commit together; a failure rolls both back and the presented token stays valid (`500`). Reuse still commits the family revoke before `401`. Measured on localhost Postgres: one in-flight refresh got slightly slower (~1.9 ms → ~2.2 ms); 16 concurrent refreshes went from about 1500 req/s to about 2300, and p99 from about 41 ms to about 19 ms. Do not split the transaction to win back the single-request millisecond.
+- **Pool idle = open (25), prepared statements after migrations.** Same section §5.
+- **Service-key hashes are cached; every key is compared, with no early exit** ([`auth.md`](auth.md) §11). The presented key is still hashed per request.
+- **Rate-limit shards and the 1024-entry sweep do not change the IP+path window** ([`auth.md`](auth.md) §6). Partial lockout counts are not swept.
+- **Left out on purpose.** No cache of JWT verification or of bcrypt results. Bcrypt cost stays 12, including the dummy hash. No group commit across requests. No `synchronous_commit = off`. No custom HTTP parser. Access tokens stay HMAC checks with no database read.
 
 ## 9. Consuming products
 
