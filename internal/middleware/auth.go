@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -78,23 +79,55 @@ func ServiceKeyAuth() gin.HandlerFunc {
 		cfg := config.Get()
 
 		keyHash := sha256.Sum256([]byte(key))
-		valid := false
-		for _, sk := range cfg.ServiceKeys {
-			skHash := sha256.Sum256([]byte(sk))
-			if subtle.ConstantTimeCompare(keyHash[:], skHash[:]) == 1 {
-				valid = true
-				logger.Debug("Service key authenticated")
-				break
-			}
+		hashes := serviceKeyHashes(cfg.ServiceKeys)
+		valid := 0
+		for i := range hashes {
+			valid |= subtle.ConstantTimeCompare(keyHash[:], hashes[i][:])
 		}
 
-		if !valid {
+		if valid != 1 {
 			logger.Warn("Invalid service key attempt from %s", c.ClientIP())
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid service key"})
 			return
 		}
+		logger.Debug("Service key authenticated")
 
 		c.Set("service_key_auth", true)
 		c.Next()
 	}
+}
+
+var (
+	serviceKeyMu    sync.Mutex
+	serviceKeyCache []string
+	serviceKeySums  [][32]byte
+)
+
+// serviceKeyHashes returns SHA-256 of the configured keys, recomputed only when the set changes.
+// The presented key is still hashed on every request and compared in constant time.
+func serviceKeyHashes(keys []string) [][32]byte {
+	serviceKeyMu.Lock()
+	defer serviceKeyMu.Unlock()
+	if sameStrings(serviceKeyCache, keys) {
+		return serviceKeySums
+	}
+	sums := make([][32]byte, len(keys))
+	for i, k := range keys {
+		sums[i] = sha256.Sum256([]byte(k))
+	}
+	serviceKeyCache = append([]string(nil), keys...)
+	serviceKeySums = sums
+	return serviceKeySums
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

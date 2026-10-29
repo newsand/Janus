@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/newsand/janus/features/auth"
@@ -39,6 +42,7 @@ func main() {
 	if err := migrations.Up(db.DB()); err != nil {
 		logger.Fatal("Failed to run migrations: %v", err)
 	}
+	db.EnablePreparedStatements()
 
 	mailer.Init(cfg)
 
@@ -49,6 +53,7 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(limitRequestBody(1 << 20))
 	r.Use(requestLogger())
 
 	v1 := r.Group("/v1")
@@ -62,19 +67,43 @@ func main() {
 
 	health.RegisterRoutes(&r.RouterGroup)
 
+	srv := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		logger.Info("Server listening on :%s", cfg.Port)
-		if err := r.Run(":" + cfg.Port); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("Failed to start server: %v", err)
 		}
 	}()
 
 	<-quit
 	logger.Info("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("HTTP shutdown: %v", err)
+	}
 	mailer.Stop()
+}
+
+func limitRequestBody(n int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, n)
+		}
+		c.Next()
+	}
 }
 
 func requestLogger() gin.HandlerFunc {

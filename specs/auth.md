@@ -100,11 +100,26 @@ No `roles`. Authorization is the receiving product's responsibility.
 | Format | 32 random bytes, hex; opaque, never a JWT |
 | Storage | SHA-256 hash only, in `refresh_tokens`; the raw value is never stored or logged |
 | Family | each login/magic-link/2FA-verify creates a new `family_id`; rotation keeps it |
-| Rotation | every `POST /auth/refresh` revokes the presented token and issues a new access + refresh pair in the same family |
-| Reuse detection | presenting an already-revoked token revokes every active token of its family and answers `401 invalid refresh token`; the revoke-on-use is an atomic conditional update, so a concurrent double use is also treated as reuse |
-| Expired token | `401 refresh token expired` |
-| Unknown token or disabled user | `401 invalid refresh token` |
+| Rotation | every `POST /auth/refresh` revokes the presented token and issues a new access + refresh pair in the same family, in **one** database transaction (§4 procedure) |
+| Reuse detection | presenting an already-revoked token revokes every active token of its family, **commits that revoke**, then answers `401 invalid refresh token`. A concurrent double use loses the conditional update and takes the same path |
+| Expired token | `401 refresh token expired`. Nothing is revoked |
+| Unknown token or disabled user | `401 invalid refresh token`. Nothing is revoked. A missing user row is the unknown-token case |
 | Logout | `POST /auth/logout` (JWT) revokes **all** active refresh tokens of the user |
+
+**Procedure (one transaction, then the response).** Request and response bodies stay §3. Do not commit the revoke and the insert separately. Do not write `200` before commit. Do not put two clients' refreshes in the same transaction.
+
+1. SHA-256 the presented token. Begin one transaction.
+2. Load that refresh row joined to its user (`id`, `user_id`, `family_id`, `expires_at`, `revoked_at`, `users.disabled_at`) by `token_hash`. On Postgres, `FOR UPDATE` the refresh row. On SQLite (tests only) omit the lock; step 7 still treats a lost race as reuse.
+3. No row → commit nothing → `401 {"error":"invalid refresh token"}`.
+4. `revoked_at` already set → set `revoked_at` on every row of that `family_id` still null, commit, then `401 {"error":"invalid refresh token"}`.
+5. `expires_at` in the past → commit nothing → `401 {"error":"refresh token expired"}`.
+6. User `disabled_at` set → commit nothing → `401 {"error":"invalid refresh token"}`.
+7. Update `revoked_at` where `id` matches and `revoked_at IS NULL`.
+   - 0 rows → step 4 (the other transaction won).
+   - 1 row → insert the next refresh token in this family and sign the access JWT, still inside the transaction. Commit, then `200` with the §3 body.
+8. An error on the update, the insert or the signature rolls the transaction back, **including the revoke of the presented token**, and answers `500 {"error":"internal error"}`. The presented token is still valid.
+
+`migrations/003_refresh_family_active.sql` adds `idx_refresh_tokens_family_active` on `(family_id) WHERE revoked_at IS NULL` for step 4. Logout keeps `idx_refresh_tokens_active` on `(user_id) WHERE revoked_at IS NULL`. Do not drop either.
 
 ---
 
@@ -130,9 +145,9 @@ Rationale: returning `account disabled` before the password confirms the email e
 
 Both are **in-memory, per process**: counters are not shared across replicas and reset on restart.
 
-**Rate limit** — fixed window per `client IP + request path`. Applies to everything under `/v1/auth/*` (login, refresh, logout, magic-link, magic-link/consume, 2fa/verify), `/v1/password/*`, and `POST /v1/invites/accept`. It does not apply to `/v1/users`, `POST /v1/invites` or `/v1/me`. Over the limit → `429 {"error":"rate limit exceeded"}`. `RATE_LIMIT_REQUESTS` (default 5) per `RATE_LIMIT_WINDOW` (default 1m).
+**Rate limit** — fixed window per `client IP + request path`. Applies to everything under `/v1/auth/*` (login, refresh, logout, magic-link, magic-link/consume, 2fa/verify), `/v1/password/*`, and `POST /v1/invites/accept`. It does not apply to `/v1/users`, `POST /v1/invites` or `/v1/me`. Over the limit → `429 {"error":"rate limit exceeded"}`. `RATE_LIMIT_REQUESTS` (default 5) per `RATE_LIMIT_WINDOW` (default 1m). The map is 32 shards (FNV-32a of `IP:path`). When a shard holds at least 1024 rate entries, entries whose window has already ended are deleted. A deleted ended window is the same as a window that elapsed: the next hit starts at count 1. Do not change the key, the limit or the window to buy throughput.
 
-**Lockout** — login only, keyed by the email exactly as submitted (not by IP). `LOCKOUT_THRESHOLD` consecutive failures (default 5) lock the key for `LOCKOUT_DURATION` (default 15m); a successful login clears it. While locked the response is `429 account temporarily locked`.
+**Lockout** — login only, keyed by the email exactly as submitted (not by IP). `LOCKOUT_THRESHOLD` consecutive failures (default 5) lock the key for `LOCKOUT_DURATION` (default 15m); a successful login clears it. While locked the response is `429 account temporarily locked`. Counts below the threshold are never deleted for inactivity. An entry that already reached the threshold and whose lock time is in the past is removed when that key is checked, and also when that shard's lockout map holds at least 1024 entries. Do not sweep partial counts.
 
 ---
 
@@ -190,7 +205,7 @@ Both are **in-memory, per process**: counters are not shared across replicas and
 ## 11. Service keys
 
 - Header `Authorization: Bearer <service_key>`. Configured as `SERVICE_KEYS`, comma-separated, whitespace trimmed, empty entries dropped.
-- Comparison is constant-time (SHA-256 of both sides + `ConstantTimeCompare`). Missing/malformed header → `401`; wrong key → `401 {"error":"invalid service key"}` and a warning with the client IP (the key value is never logged).
+- The SHA-256 of each configured key is cached and recomputed only when that list changes. The presented bearer is hashed on every request. Every cached hash is compared with `ConstantTimeCompare` and the results are OR-ed, with no early exit. Missing/malformed header → `401`. `valid != 1` → `401 {"error":"invalid service key"}` and a warning with the client IP (the key value is never logged). A match logs at debug only.
 - Protects: all of `/v1/users`, `POST /v1/invites`, `POST /v1/auth/magic-link`, `POST /v1/password/forgot`. It is a machine secret; there is no per-user admin role and CRUD never opens with a user JWT.
 - **Rotation:** keep two keys (current + previous) so consumers switch without downtime, then drop the old one. Two keys are a recommendation: validation only requires the list to be non-empty.
 - It must never reach a browser.
@@ -213,7 +228,9 @@ Both are **in-memory, per process**: counters are not shared across replicas and
 
 ## 13. Configuration and startup validation
 
-Settings come from environment variables (full table in `README.md`). `main` loads config, calls `Validate()`, connects to Postgres, applies migrations, starts the mailer, then serves.
+Settings come from environment variables (full table in `README.md`). `main` loads config, calls `Validate()`, connects to Postgres, applies migrations, enables prepared statements, starts the mailer, then serves.
+
+**HTTP.** `http.Server`, not `gin.Run`. `ReadHeaderTimeout` 5s, `ReadTimeout` 60s, `WriteTimeout` 60s, `IdleTimeout` 120s, `MaxHeaderBytes` 1 MiB. Every body is wrapped with `MaxBytesReader` at 1 MiB before routing. A larger body fails JSON binding as `400 {"error":"invalid request"}` on endpoints that bind a body. 1 MiB stays above the largest accepted JSON (`body` ≤ 10000). Do not lower `WriteTimeout` below 60s: login runs bcrypt cost 12 inside that window. `SIGINT` / `SIGTERM` call `Shutdown` with a 10s deadline, then stop the mailer.
 
 - **`DEV_ENV=true`** — dev mode: `Validate()` checks nothing (defaults and short secrets work; a warning is logged). **`DEV_ENV` unset/`false` is production.** Mailer settings are validated only outside dev mode.
 - **Production rules:** `JWT_SECRET` ≥ 45 characters; `SERVICE_KEYS` not empty and every key ≥ 45 characters; the service does not start otherwise. No default secret is accepted (the built-in `change-me-in-production` works only in dev).
@@ -225,7 +242,8 @@ Settings come from environment variables (full table in `README.md`). `main` loa
 
 **Postgres** is the source of truth: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`, `mail_outbox` (plus `schema_migrations`). No Redis; rate limit and lockout are in memory (§6). Tests use in-memory SQLite.
 
-- SQL files in `migrations/` are the schema source of truth (the GORM models match); on every boot the pending ones are applied in filename order and recorded in `schema_migrations`.
+- SQL files in `migrations/` are the schema source of truth (the GORM models match); on every boot the pending ones are applied in filename order and recorded in `schema_migrations`. Prepared statements are turned on only after that, on the same pool: a migration file is more than one statement and must not be prepared.
+- `refresh_tokens` partial indexes: `idx_refresh_tokens_active (user_id) WHERE revoked_at IS NULL` (logout) and `idx_refresh_tokens_family_active (family_id) WHERE revoked_at IS NULL` (reuse, migration `003`). Do not drop either.
 - Every opaque token (refresh, invite, magic, recover, 2FA challenge) is stored as a SHA-256 hash only; the raw token is never stored or logged.
 - All primary keys are UUID v4.
 
@@ -269,7 +287,7 @@ Protected calls without a valid credential answer `401`. The auth service never 
 ## 16. Invariants (acceptance criteria)
 
 1. Identity via JWT only; no roles in this service or its tokens.
-2. Refresh: TTL + rotation + reuse revokes the family.
+2. Refresh: TTL + one transaction per rotation (presented token revoked and next token inserted commit together, or both roll back) + reuse revokes the family and that revoke commits before the 401. The token JSON is written only after commit.
 3. Recovery: one-shot, TTL, out-of-band email, all refresh tokens revoked on reset.
 4. 2FA off never breaks login; 2FA on never issues an access token before the second factor.
 5. Login: the four failure cases are indistinguishable (status and body); a wrong password on a disabled account counts toward lockout, a correct one does not.

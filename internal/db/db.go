@@ -27,8 +27,10 @@ func Init(databaseURL string) error {
 		return err
 	}
 
+	// Idle matches open so a burst does not pay a new handshake per request.
+	// Stay under a typical Postgres max_connections, leaving room for admin sessions.
 	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetMaxIdleConns(25)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 	sqlDB.SetConnMaxIdleTime(30 * time.Minute)
 
@@ -42,6 +44,21 @@ func Init(databaseURL string) error {
 
 func DB() *gorm.DB {
 	return gormDB
+}
+
+// EnablePreparedStatements caches query plans for the life of the process.
+// Call it after migrations: a prepared statement cannot hold the multi-statement
+// migration scripts, and a plan cached before DDL would be stale.
+func EnablePreparedStatements() {
+	if gormDB == nil || gormDB.PrepareStmt {
+		return
+	}
+	prepared := gorm.NewPreparedStmtDB(gormDB.ConnPool, 0, 0)
+	gormDB.PrepareStmt = true
+	gormDB.ConnPool = prepared
+	if gormDB.Statement != nil {
+		gormDB.Statement.ConnPool = prepared
+	}
 }
 
 func SetTestDB(testDB *gorm.DB) {
