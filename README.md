@@ -271,13 +271,9 @@ go build -o server .
 
 Postgres required. SQL files in `migrations/` are the schema source of truth (GORM models match). On every start the process applies pending versions (tracked in `schema_migrations`), same idea as `manage.py migrate`.
 
-Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`, `mail_outbox`.
+Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`, `mail_outbox`, `api_keys`.
 
-API keys migration (apply after `001`):
-
-```bash
-psql $DATABASE_URL -f migrations/002_api_keys.sql
-```
+The server applies `migrations/002_api_keys.sql` on startup and records it in `schema_migrations`. Do not run this file manually. If it was already run by hand, record it so startup does not try to create the table again: `INSERT INTO schema_migrations (version) VALUES ('002_api_keys.sql');`
 
 Adds table `api_keys` (`key_hash` unique, `expires_at`/`revoked_at` nullable, `owner_user_id` FK `ON DELETE CASCADE`).
 
