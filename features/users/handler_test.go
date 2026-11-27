@@ -561,8 +561,8 @@ func TestCreateUserCPFValidation(t *testing.T) {
 	}
 	var resp map[string]string
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["error"] != "cpf invalid" {
-		t.Fatalf("error=%q", resp["error"])
+	if resp["error"] != "invalid request" || resp["details"] != "cpf invalid" {
+		t.Fatalf("error=%q details=%q", resp["error"], resp["details"])
 	}
 }
 

@@ -119,28 +119,7 @@ func Login(c *gin.Context) {
 
 	middleware.ClearLockout(lockoutKey)
 
-	if user.TwoFAEnabled && user.TwoFASecret != nil {
-		challengeToken, err := createTwoFAChallenge(user.ID)
-		if err != nil {
-			logger.Error("Failed to create 2FA challenge: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"requires_2fa":    true,
-			"challenge_token": challengeToken,
-		})
-		return
-	}
-
-	tokens, err := issueTokens(user.ID)
-	if err != nil {
-		logger.Error("Failed to issue tokens: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
-	c.JSON(http.StatusOK, tokens)
+	respondAuthenticated(c, user)
 }
 
 type refreshRow struct {
@@ -267,10 +246,8 @@ func Logout(c *gin.Context) {
 }
 
 func GetMe(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-
-	var user models.User
-	if err := db.DB().First(&user, "id = ?", userID).Error; err != nil {
+	user, err := CurrentUser(c)
+	if err != nil {
 		logger.Error("Failed to get user: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -355,6 +332,13 @@ func ConsumeMagicLink(c *gin.Context) {
 		return
 	}
 
+	respondAuthenticated(c, user)
+}
+
+
+// respondAuthenticated finishes a first-factor login: users with 2FA get a
+// challenge token instead of a session.
+func respondAuthenticated(c *gin.Context, user models.User) {
 	if user.TwoFAEnabled && user.TwoFASecret != nil {
 		challengeToken, err := createTwoFAChallenge(user.ID)
 		if err != nil {
@@ -369,7 +353,13 @@ func ConsumeMagicLink(c *gin.Context) {
 		return
 	}
 
-	tokens, err := issueTokens(user.ID)
+	RespondWithNewSession(c, user.ID)
+}
+
+// RespondWithNewSession issues an access token and a refresh token in a new
+// family and writes them as 200, or 500 "internal error" on failure.
+func RespondWithNewSession(c *gin.Context, userID string) {
+	tokens, err := issueTokens(userID)
 	if err != nil {
 		logger.Error("Failed to issue tokens: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -377,6 +367,15 @@ func ConsumeMagicLink(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, tokens)
+}
+
+// CurrentUser loads the user whose id JWTAuth stored in the context.
+func CurrentUser(c *gin.Context) (models.User, error) {
+	userID, _ := c.Get("user_id")
+
+	var user models.User
+	err := db.DB().First(&user, "id = ?", userID).Error
+	return user, err
 }
 
 func issueTokens(userID string) (gin.H, error) {

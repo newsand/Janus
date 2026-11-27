@@ -51,6 +51,27 @@ func RegisterRoutes(r *gin.RouterGroup) {
 	}
 }
 
+func findUserOr404(c *gin.Context, id string) (models.User, bool) {
+	var user models.User
+	if err := db.DB().First(&user, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return user, false
+	}
+	return user, true
+}
+
+// FindUsableToken loads into dst the single-use token row whose hash matches
+// rawToken. A missing row and a spent one (isSpent, evaluated only after the
+// row loads) both answer the same 401 so callers cannot tell them apart.
+func FindUsableToken(c *gin.Context, rawToken string, dst interface{}, isSpent func() bool, invalidMsg string) bool {
+	err := db.DB().Where("token_hash = ?", models.HashToken(rawToken)).First(dst).Error
+	if err != nil || isSpent() {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": invalidMsg})
+		return false
+	}
+	return true
+}
+
 type CreateUserRequest struct {
 	Email    string  `json:"email" binding:"required,email"`
 	Nome     string  `json:"nome" binding:"required"`
@@ -93,7 +114,7 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 	if !validCPF(req.CPF) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cpf invalid"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": "cpf invalid"})
 		return
 	}
 
@@ -198,9 +219,8 @@ func ListUsers(c *gin.Context) {
 func GetUser(c *gin.Context) {
 	id := c.Param("id")
 
-	var user models.User
-	if err := db.DB().First(&user, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+	user, ok := findUserOr404(c, id)
+	if !ok {
 		return
 	}
 
@@ -225,9 +245,8 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
-	var user models.User
-	if err := db.DB().First(&user, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+	user, ok := findUserOr404(c, id)
+	if !ok {
 		return
 	}
 
@@ -255,7 +274,7 @@ func UpdateUser(c *gin.Context) {
 	}
 	if req.CPF != nil {
 		if !validCPF(req.CPF) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cpf invalid"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": "cpf invalid"})
 			return
 		}
 		updates["cpf"] = *req.CPF
@@ -351,16 +370,9 @@ func AcceptInvite(c *gin.Context) {
 		return
 	}
 
-	tokenHash := models.HashToken(req.Token)
-
 	var invite models.Invite
-	if err := db.DB().Where("token_hash = ?", tokenHash).First(&invite).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired invite"})
-		return
-	}
-
-	if invite.UsedAt != nil || time.Now().After(invite.ExpiresAt) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired invite"})
+	isSpent := func() bool { return invite.UsedAt != nil || time.Now().After(invite.ExpiresAt) }
+	if !FindUsableToken(c, req.Token, &invite, isSpent, "invalid or expired invite") {
 		return
 	}
 

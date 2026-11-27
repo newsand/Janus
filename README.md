@@ -114,7 +114,7 @@ POST /v1/password/reset      # Reset password with token
 
 ### 2FA
 
-**Not production-ready.** Do not set `2fa_enabled=true` in production. Known gaps: disabled users can still receive tokens via the 2FA flow; TOTP codes can be replayed; no attempt limit on the challenge.
+**Not production-ready.** Do not set `2fa_enabled=true` in production. Known gaps: disabled users can still receive tokens via the 2FA flow; TOTP codes can be replayed; no attempt limit on the challenge. See `corrections.md`.
 
 ```
 POST /v1/auth/2fa/verify     # Verify 2FA code during login
@@ -133,6 +133,23 @@ POST   /v1/invites           # Create invite
 POST   /v1/invites/accept    # Accept invite (public, rate limited)
 ```
 
+### API Keys (Service Key Required)
+
+Package `features/apikeys`. Keys are for third parties calling a **product** backend; Janus stores and verifies them and returns identity only — the product authorizes.
+
+```
+POST   /v1/api-keys              # Create key → 201 {key, api_key}; raw "jns_…" key returned once
+GET    /v1/api-keys              # List metadata (?owner_user_id=&audience=), newest first
+POST   /v1/api-keys/:id/revoke   # Revoke (optional {audience} scope; idempotent)
+PATCH  /v1/api-keys/:id          # Rename ({name, audience?}); name is the only editable field
+POST   /v1/api-keys/verify       # {key, audience} → 200 {valid, key_id, owner_user_id, audience} | 401 invalid api key
+```
+
+- Format `jns_` + 64 hex chars; only the SHA-256 hash is stored (never the raw key, never logged).
+- `expires_in_days`: integer 1..365, or absent/`null` = never expires.
+- `audience` is required; `audience_type` accepts only `"text"` (reserved for a future second type).
+- Verify answers one identical `401 {"error":"invalid api key"}` for unknown, unprefixed, revoked, expired, disabled-owner and wrong-audience keys.
+
 ## Authentication
 
 ### JWT Bearer Token
@@ -143,10 +160,10 @@ curl -H "Authorization: Bearer <access_token>" http://localhost:8080/v1/me
 
 ### Service Key
 
-For user CRUD, invites, magic-link request, and password/forgot:
+For user CRUD, invites, magic-link request, password/forgot, and API key management (`/v1/api-keys`):
 
 ```bash
-curl -H "Authorization: Bearer <service_key>" http://localhost:8080/v1/users
+curl -H "Authorization: Bearer $SERVICE_KEY" http://localhost:8080/v1/users
 ```
 
 Configure `SERVICE_KEYS=key1,key2` (comma-separated). Keep 2 keys active for rotation.
@@ -157,9 +174,9 @@ Configure `SERVICE_KEYS=key1,key2` (comma-separated). Keep 2 keys active for rot
 
 ```bash
 curl -X POST http://localhost:8080/v1/users \
-  -H "Authorization: Bearer your-service-key" \
+  -H "Authorization: Bearer $SERVICE_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","nome":"User Name","password":"securepass123"}'
+  -d '{"email":"user@example.com","nome":"User Name","password":"<password>"}'
 ```
 
 ### Login
@@ -167,14 +184,14 @@ curl -X POST http://localhost:8080/v1/users \
 ```bash
 curl -X POST http://localhost:8080/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"securepass123"}'
+  -d '{"email":"user@example.com","password":"<password>"}'
 ```
 
 Response:
 ```json
 {
-  "access_token": "eyJ...",
-  "refresh_token": "a1b2c3...",
+  "access_token": "<access_token>",
+  "refresh_token": "<refresh_token>",
   "token_type": "Bearer",
   "expires_in": 900
 }
@@ -185,7 +202,7 @@ Response:
 ```bash
 curl -X POST http://localhost:8080/v1/auth/refresh \
   -H "Content-Type: application/json" \
-  -d '{"refresh_token":"a1b2c3..."}'
+  -d '{"refresh_token":"<refresh_token>"}'
 ```
 
 ### Create Invite
@@ -194,14 +211,14 @@ The product supplies the email copy. `body` must contain `{{link}}` (Janus repla
 
 ```bash
 curl -X POST http://localhost:8080/v1/invites \
-  -H "Authorization: Bearer your-service-key" \
+  -H "Authorization: Bearer $SERVICE_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email":"newuser@example.com","subject":"Convite Crazy","body":"Ola,\n\nAceite: {{link}}\n"}'
 ```
 
 Response (`MAILER_STUB=true`, the default in dev/docker-compose):
 ```json
-{"message":"invite sent","email":"newuser@example.com","token":"a1b2c3...","expires_at":"2026-09-24T16:17:21Z"}
+{"message":"invite sent","email":"newuser@example.com","token":"<invite_token>","expires_at":"2026-09-24T16:17:21Z"}
 ```
 
 `token` and `expires_at` are only present when `MAILER_STUB=true`. With `MAILER_STUB=false`, the message is queued in `mail_outbox` and delivered by the worker; the response is just `{"message":"invite sent","email":"..."}`. Never rely on the `token` field in production.
@@ -215,7 +232,7 @@ Same shape: `email`, `subject`, `body` with `{{link}}`. Always returns a generic
 ```bash
 curl -X POST http://localhost:8080/v1/invites/accept \
   -H "Content-Type: application/json" \
-  -d '{"token":"abc123...","password":"securepass123","nome":"New User"}'
+  -d '{"token":"<invite_token>","password":"<password>","nome":"New User"}'
 ```
 
 ## Deployment
@@ -254,7 +271,11 @@ go build -o server .
 
 Postgres required. SQL files in `migrations/` are the schema source of truth (GORM models match). On every start the process applies pending versions (tracked in `schema_migrations`), same idea as `manage.py migrate`.
 
-Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`, `mail_outbox`.
+Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`, `mail_outbox`, `api_keys`.
+
+The server applies `migrations/002_api_keys.sql` on startup and records it in `schema_migrations`. Do not run this file manually. If it was already run by hand, record it so startup does not try to create the table again: `INSERT INTO schema_migrations (version) VALUES ('002_api_keys.sql');`
+
+Adds table `api_keys` (`key_hash` unique, `expires_at`/`revoked_at` nullable, `owner_user_id` FK `ON DELETE CASCADE`).
 
 ## Security Notes
 
@@ -262,6 +283,7 @@ Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, 
 - **JWT Secret**: Use a 45+ character random string in production
 - **Service Keys**: Rotate keys by adding new key, updating consumers, then removing old key. Constant-time comparison used.
 - **Refresh Tokens**: Stored as SHA-256 hashes. Rotation on each use. Reuse detection revokes entire family (atomic check prevents TOCTOU).
+- **API Keys**: Stored as SHA-256 hashes only; the raw `jns_` key is shown once at creation. Verify leaks no reason (single `401 invalid api key`). All `/v1/api-keys` routes require a service key.
 - **Passwords**: bcrypt cost 12
 - **Rate Limiting**: In-memory, per client IP and path, on `/v1/auth/*`, `/v1/password/*` and `POST /v1/invites/accept`. Configure via `RATE_LIMIT_*` vars. **Note:** In-memory counters do not sync across replicas. For multi-replica deployments, implement Redis/DB-backed rate limiting or use an API gateway.
 - **Account Lockout**: In-memory, login only, keyed by the email as submitted. Configure via `LOCKOUT_*` vars. Same multi-replica caveat as rate limiting.

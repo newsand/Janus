@@ -1,0 +1,27 @@
+{
+  "cyclomatic_max": 10,
+  "cognitive_max": 15,
+  "duplication_max_percent": 3,
+  "security_fail_severity": "medium",
+  "semgrep_configs": [
+    "p/default"
+  ],
+  "test_commands": {
+    "go": "mkdir -p .quality && go test -race -coverpkg=./... -coverprofile=.quality/cover.out $(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...) && total=$(go tool cover -func=.quality/cover.out | awk '/^total:/{sub(/%/,\"\",$NF); print $NF}') && echo \"total coverage: ${total}% (min 50%)\" && awk -v t=\"$total\" 'BEGIN{exit !(t != \"\" && t+0 >= 50)}'"
+  },
+  "semgrep_test_exclude_rules": [
+    "go.jwt-go.security.jwt-none-alg.jwt-go-none-algorithm",
+    "generic.secrets.security.detected-generic-secret.detected-generic-secret"
+  ],
+  "semgrep_container_exclude": {
+    "rules": [
+      "dockerfile.security.missing-user.missing-user",
+      "yaml.docker-compose.security.no-new-privileges.no-new-privileges",
+      "yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service"
+    ],
+    "paths": [
+      "Dockerfile",
+      "docker-compose.yml"
+    ]
+  }
+}

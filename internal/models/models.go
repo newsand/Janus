@@ -49,12 +49,12 @@ func (rt *RefreshToken) BeforeCreate(tx *gorm.DB) error {
 }
 
 type Invite struct {
-	ID        string     `gorm:"type:uuid;primaryKey"`
-	Email     string     `gorm:"index;not null"`
-	TokenHash string     `gorm:"uniqueIndex;not null"`
-	ExpiresAt time.Time  `gorm:"not null"`
+	ID        string    `gorm:"type:uuid;primaryKey"`
+	Email     string    `gorm:"index;not null"`
+	TokenHash string    `gorm:"uniqueIndex;not null"`
+	ExpiresAt time.Time `gorm:"not null"`
 	UsedAt    *time.Time
-	CreatedAt time.Time  `gorm:"autoCreateTime"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
 }
 
 func (i *Invite) BeforeCreate(tx *gorm.DB) error {
@@ -65,12 +65,12 @@ func (i *Invite) BeforeCreate(tx *gorm.DB) error {
 }
 
 type MagicToken struct {
-	ID        string     `gorm:"type:uuid;primaryKey"`
-	UserID    string     `gorm:"type:uuid;index;not null"`
-	TokenHash string     `gorm:"uniqueIndex;not null"`
-	ExpiresAt time.Time  `gorm:"not null"`
+	ID        string    `gorm:"type:uuid;primaryKey"`
+	UserID    string    `gorm:"type:uuid;index;not null"`
+	TokenHash string    `gorm:"uniqueIndex;not null"`
+	ExpiresAt time.Time `gorm:"not null"`
 	UsedAt    *time.Time
-	CreatedAt time.Time  `gorm:"autoCreateTime"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
 }
 
 func (mt *MagicToken) BeforeCreate(tx *gorm.DB) error {
@@ -81,12 +81,12 @@ func (mt *MagicToken) BeforeCreate(tx *gorm.DB) error {
 }
 
 type RecoverToken struct {
-	ID        string     `gorm:"type:uuid;primaryKey"`
-	UserID    string     `gorm:"type:uuid;index;not null"`
-	TokenHash string     `gorm:"uniqueIndex;not null"`
-	ExpiresAt time.Time  `gorm:"not null"`
+	ID        string    `gorm:"type:uuid;primaryKey"`
+	UserID    string    `gorm:"type:uuid;index;not null"`
+	TokenHash string    `gorm:"uniqueIndex;not null"`
+	ExpiresAt time.Time `gorm:"not null"`
 	UsedAt    *time.Time
-	CreatedAt time.Time  `gorm:"autoCreateTime"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
 }
 
 func (rt *RecoverToken) BeforeCreate(tx *gorm.DB) error {
@@ -107,6 +107,25 @@ type TwoFAChallenge struct {
 func (c *TwoFAChallenge) BeforeCreate(tx *gorm.DB) error {
 	if c.ID == "" {
 		c.ID = uuid.New().String()
+	}
+	return nil
+}
+
+type APIKey struct {
+	ID           string     `gorm:"type:uuid;primaryKey" json:"id"`
+	OwnerUserID  string     `gorm:"type:uuid;index;not null" json:"owner_user_id"`
+	Name         *string    `gorm:"size:100" json:"name"`
+	Audience     string     `gorm:"size:100;index;not null" json:"audience"`
+	AudienceType string     `gorm:"size:20;not null;default:'text'" json:"audience_type"`
+	KeyHash      string     `gorm:"size:64;uniqueIndex;not null" json:"-"`
+	ExpiresAt    *time.Time `json:"expires_at"`
+	RevokedAt    *time.Time `json:"revoked_at"`
+	CreatedAt    time.Time  `gorm:"autoCreateTime" json:"created_at"`
+}
+
+func (k *APIKey) BeforeCreate(tx *gorm.DB) error {
+	if k.ID == "" {
+		k.ID = uuid.New().String()
 	}
 	return nil
 }
