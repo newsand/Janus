@@ -6,6 +6,7 @@ import (
 	"syscall"
 
 	"github.com/gin-gonic/gin"
+	"github.com/newsand/janus/features/apikeys"
 	"github.com/newsand/janus/features/auth"
 	"github.com/newsand/janus/features/health"
 	"github.com/newsand/janus/features/password"
@@ -50,6 +51,7 @@ func main() {
 		users.RegisterRoutes(v1)
 		password.RegisterRoutes(v1)
 		twofa.RegisterRoutes(v1)
+		apikeys.RegisterRoutes(v1)
 	}
 
 	health.RegisterRoutes(&r.RouterGroup)

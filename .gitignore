@@ -29,3 +29,6 @@ vendor/
 # OS files
 .DS_Store
 Thumbs.db
+
+# quality-gate-lefthook reports
+.quality/

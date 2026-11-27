@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/newsand/janus/features/users"
 	"github.com/newsand/janus/internal/config"
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
@@ -84,16 +85,9 @@ func Reset(c *gin.Context) {
 		return
 	}
 
-	tokenHash := models.HashToken(req.Token)
-
 	var recoverToken models.RecoverToken
-	if err := db.DB().Where("token_hash = ?", tokenHash).First(&recoverToken).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
-		return
-	}
-
-	if recoverToken.UsedAt != nil || time.Now().After(recoverToken.ExpiresAt) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+	isSpent := func() bool { return recoverToken.UsedAt != nil || time.Now().After(recoverToken.ExpiresAt) }
+	if !users.FindUsableToken(c, req.Token, &recoverToken, isSpent, "invalid or expired token") {
 		return
 	}
 

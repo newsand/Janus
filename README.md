@@ -92,6 +92,8 @@ POST /v1/password/reset      # Reset password with token
 
 ### 2FA
 
+> ⚠️ **2FA NÃO FUNCIONAL (ainda).** Implementação incompleta e com falhas conhecidas (usuário desabilitado recebe tokens, replay de TOTP, sem limite de tentativas no challenge — ver `corrections.md`). **Não habilitar `2fa_enabled=true` em produção.**
+
 ```
 POST /v1/auth/2fa/verify     # Verify 2FA code during login
 POST /v1/me/2fa/enable       # Enable 2FA (requires JWT)
@@ -109,6 +111,23 @@ POST   /v1/invites           # Create invite
 POST   /v1/invites/accept    # Accept invite (public, rate limited)
 ```
 
+### API Keys (Service Key Required)
+
+Package `features/apikeys`. Keys are for third parties calling a **product** backend; Janus stores and verifies them and returns identity only — the product authorizes.
+
+```
+POST   /v1/api-keys              # Create key → 201 {key, api_key}; raw "jns_…" key returned once
+GET    /v1/api-keys              # List metadata (?owner_user_id=&audience=), newest first
+POST   /v1/api-keys/:id/revoke   # Revoke (optional {audience} scope; idempotent)
+PATCH  /v1/api-keys/:id          # Rename ({name, audience?}); name is the only editable field
+POST   /v1/api-keys/verify       # {key, audience} → 200 {valid, key_id, owner_user_id, audience} | 401 invalid api key
+```
+
+- Format `jns_` + 64 hex chars; only the SHA-256 hash is stored (never the raw key, never logged).
+- `expires_in_days`: integer 1..365, or absent/`null` = never expires.
+- `audience` is required; `audience_type` accepts only `"text"` (reserved for a future second type).
+- Verify answers one identical `401 {"error":"invalid api key"}` for unknown, unprefixed, revoked, expired, disabled-owner and wrong-audience keys.
+
 ## Authentication
 
 ### JWT Bearer Token
@@ -119,10 +138,10 @@ curl -H "Authorization: Bearer <access_token>" http://localhost:8080/v1/me
 
 ### Service Key
 
-For user CRUD and invite creation:
+For user CRUD, invite creation and API key management (`/v1/api-keys`):
 
 ```bash
-curl -H "Authorization: Bearer <service_key>" http://localhost:8080/v1/users
+curl -H "Authorization: Bearer $SERVICE_KEY" http://localhost:8080/v1/users
 ```
 
 Configure `SERVICE_KEYS=key1,key2` (comma-separated). Keep 2 keys active for rotation.
@@ -133,9 +152,9 @@ Configure `SERVICE_KEYS=key1,key2` (comma-separated). Keep 2 keys active for rot
 
 ```bash
 curl -X POST http://localhost:8080/v1/users \
-  -H "Authorization: Bearer your-service-key" \
+  -H "Authorization: Bearer $SERVICE_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","nome":"User Name","password":"securepass123"}'
+  -d '{"email":"user@example.com","nome":"User Name","password":"<password>"}'
 ```
 
 ### Login
@@ -143,14 +162,14 @@ curl -X POST http://localhost:8080/v1/users \
 ```bash
 curl -X POST http://localhost:8080/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"securepass123"}'
+  -d '{"email":"user@example.com","password":"<password>"}'
 ```
 
 Response:
 ```json
 {
-  "access_token": "eyJ...",
-  "refresh_token": "a1b2c3...",
+  "access_token": "<access_token>",
+  "refresh_token": "<refresh_token>",
   "token_type": "Bearer",
   "expires_in": 900
 }
@@ -161,21 +180,21 @@ Response:
 ```bash
 curl -X POST http://localhost:8080/v1/auth/refresh \
   -H "Content-Type: application/json" \
-  -d '{"refresh_token":"a1b2c3..."}'
+  -d '{"refresh_token":"<refresh_token>"}'
 ```
 
 ### Create Invite
 
 ```bash
 curl -X POST http://localhost:8080/v1/invites \
-  -H "Authorization: Bearer your-service-key" \
+  -H "Authorization: Bearer $SERVICE_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email":"newuser@example.com"}'
 ```
 
 Response (`MAILER_STUB=true`, the default in dev/docker-compose):
 ```json
-{"message":"invite sent","email":"newuser@example.com","token":"a1b2c3...","expires_at":"2026-09-24T16:17:21Z"}
+{"message":"invite sent","email":"newuser@example.com","token":"<invite_token>","expires_at":"2026-09-24T16:17:21Z"}
 ```
 
 `token` and `expires_at` are only present when `MAILER_STUB=true` — the mailer isn't real, so
@@ -188,7 +207,7 @@ just `{"message":"invite sent","email":"..."}`. Never rely on the `token` field 
 ```bash
 curl -X POST http://localhost:8080/v1/invites/accept \
   -H "Content-Type: application/json" \
-  -d '{"token":"abc123...","password":"securepass123","nome":"New User"}'
+  -d '{"token":"<invite_token>","password":"<password>","nome":"New User"}'
 ```
 
 ## Deployment
@@ -221,6 +240,7 @@ go build -o server .
 
 # Run migrations
 psql $DATABASE_URL -f migrations/001_initial.sql
+psql $DATABASE_URL -f migrations/002_api_keys.sql
 
 # Start
 ./server
@@ -238,12 +258,21 @@ psql $DATABASE_URL -f migrations/001_initial.sql
 
 Tables: `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges`.
 
+API keys migration (apply after `001`):
+
+```bash
+psql $DATABASE_URL -f migrations/002_api_keys.sql
+```
+
+Adds table `api_keys` (`key_hash` unique, `expires_at`/`revoked_at` nullable, `owner_user_id` FK `ON DELETE CASCADE`).
+
 ## Security Notes
 
 - **Secrets at startup**: with `DEV_ENV` unset/`false` (production) the service refuses to start unless `JWT_SECRET` and every `SERVICE_KEYS` entry have at least 45 characters (and `SERVICE_KEYS` is not empty). `DEV_ENV=true` skips the check and logs a warning; it is for local testing only (the bundled `docker-compose.yml` sets it). Generate with e.g. `openssl rand -base64 48`.
 - **JWT Secret**: Use a 45+ character random string in production
 - **Service Keys**: Rotate keys by adding new key, updating consumers, then removing old key. Constant-time comparison used.
 - **Refresh Tokens**: Stored as SHA-256 hashes. Rotation on each use. Reuse detection revokes entire family (atomic check prevents TOCTOU).
+- **API Keys**: Stored as SHA-256 hashes only; the raw `jns_` key is shown once at creation. Verify leaks no reason (single `401 invalid api key`). All `/v1/api-keys` routes require a service key.
 - **Passwords**: bcrypt cost 12
 - **Rate Limiting**: In-memory per-endpoint. Configure via `RATE_LIMIT_*` vars. **Note:** In-memory counters do not sync across replicas. For multi-replica deployments, implement Redis/DB-backed rate limiting or use an API gateway.
 - **Account Lockout**: In-memory per-account/IP. Configure via `LOCKOUT_*` vars. Same multi-replica caveat as rate limiting.

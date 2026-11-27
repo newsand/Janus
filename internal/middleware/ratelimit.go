@@ -16,7 +16,7 @@ type rateLimitEntry struct {
 }
 
 type lockoutEntry struct {
-	failCount  int
+	failCount   int
 	lockedUntil time.Time
 }
 
@@ -30,11 +30,11 @@ func RateLimit() gin.HandlerFunc {
 	cfg := config.Get()
 	return func(c *gin.Context) {
 		key := c.ClientIP() + ":" + c.Request.URL.Path
-		
+
 		mu.Lock()
 		entry, exists := rateLimits[key]
 		now := time.Now()
-		
+
 		if !exists || now.After(entry.windowEnd) {
 			rateLimits[key] = &rateLimitEntry{
 				count:     1,
@@ -44,7 +44,7 @@ func RateLimit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		entry.count++
 		if entry.count > cfg.RateLimitRequests {
 			mu.Unlock()
@@ -63,22 +63,22 @@ func CheckLockout(ctx context.Context, identifier string) bool {
 	mu.RLock()
 	entry, exists := lockouts[identifier]
 	mu.RUnlock()
-	
+
 	if !exists {
 		return false
 	}
-	
+
 	now := time.Now()
 	if now.Before(entry.lockedUntil) {
 		return true
 	}
-	
+
 	if entry.failCount >= cfg.LockoutThreshold && now.After(entry.lockedUntil) {
 		mu.Lock()
 		delete(lockouts, identifier)
 		mu.Unlock()
 	}
-	
+
 	return false
 }
 
@@ -86,30 +86,30 @@ func RecordFailedAttempt(identifier string) bool {
 	cfg := config.Get()
 	mu.Lock()
 	defer mu.Unlock()
-	
+
 	entry, exists := lockouts[identifier]
 	now := time.Now()
-	
+
 	if !exists {
 		lockouts[identifier] = &lockoutEntry{
-			failCount:  1,
+			failCount:   1,
 			lockedUntil: time.Time{},
 		}
 		return false
 	}
-	
+
 	if now.After(entry.lockedUntil) && entry.failCount >= cfg.LockoutThreshold {
 		entry.failCount = 1
 		entry.lockedUntil = time.Time{}
 		return false
 	}
-	
+
 	entry.failCount++
 	if entry.failCount >= cfg.LockoutThreshold {
 		entry.lockedUntil = now.Add(cfg.LockoutDuration)
 		return true
 	}
-	
+
 	return false
 }
 

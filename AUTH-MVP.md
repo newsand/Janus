@@ -95,7 +95,7 @@ Sem essas regras, refresh = access eterno. Implementação deve ter testes para 
 
 ## 5. Recover password (fechado)
 
-1. `POST /password/forgot` com email → **sempre** responde 204/200 genérico (não vaza se email existe).  
+1. `POST /password/forgot` com email → **sempre** responde 204/200 genérico (não vaza se email existe), inclusive para email ausente/inválido ou corpo inválido (bind error) — nunca `400` (decisão #12).  
 2. Se user existe: gera token **one-shot** (opaco, só hash no DB), TTL **1 hora**, invalida tokens de recover anteriores do user.  
 3. Entrega **out-of-band** (e-mail). Canal concreto = dependência de infra; contrato da API e do token ficam fechados mesmo se o mailer for stub em dev.  
 4. `POST /password/reset` com token + nova senha → valida one-shot + TTL → troca hash → **consome** token → revoga **todas** as famílias de refresh do user.  
@@ -104,6 +104,8 @@ Sem essas regras, refresh = access eterno. Implementação deve ter testes para 
 ---
 
 ## 6. 2FA `on/off`
+
+> ⚠️ **2FA NÃO FUNCIONAL (ainda).** Implementação incompleta e com falhas conhecidas (usuário desabilitado recebe tokens, replay de TOTP, sem limite de tentativas no challenge — ver `corrections.md`). **Não habilitar `2fa_enabled=true` em produção.**
 
 | `2fa_enabled` | Comportamento login |
 |---|---|
@@ -207,6 +209,26 @@ Sem redirects / sem OAuth bounce. Cada front/sistema tem a própria tela de logi
 
 **Postgres** (fonte da verdade: users, refresh families, invites, magic tokens).  
 Redis opcional só para rate-limit. SQLite rejeitado neste MVP por write path do refresh.
+
+---
+
+## 10. API keys (fechado, 2026-11-26)
+
+API key = credencial que um sistema terceiro usa para chamar um **produto** (nunca o Janus). O Janus guarda e verifica; **o produto autoriza**. O Janus devolve só identidade (`owner_user_id`) — sem scopes, roles ou permissões. Service keys (§7) continuam sendo a confiança produto ↔ Janus. Código: pacote `features/apikeys`; tabela `api_keys` em `migrations/002_api_keys.sql`.
+
+- **Formato:** `jns_` + 32 bytes aleatórios em hex. O prefixo não é segredo (o produto separa `jns_` de JWT `eyJ`; scanners detectam vazamento).
+- **Armazenamento:** só o hash SHA-256 (`models.HashToken`). A chave crua sai **uma vez**, na resposta do create; nunca é gravada, logada nem aparece em list/revoke/rename/verify.
+- **Validade:** `expires_in_days` inteiro `1..365`; ausente/`null` = nunca expira; fora da faixa → `400 expires_in_days must be between 1 and 365`.
+- **Audience:** produto dono da chave (ex. `crazy`). `audience_type` só aceita `"text"` (default); o campo fica reservado para um 2º tipo futuro sem mudar schema/contrato.
+- **Dono:** `owner_user_id` precisa existir e estar habilitado na criação (`400 invalid owner`).
+
+| Endpoint (todos `ServiceKeyAuth`, sem rate limit) | Contrato |
+|---|---|
+| `POST /v1/api-keys` | `{owner_user_id, audience, audience_type?, expires_in_days?, name?}` → `201 {key, api_key}` |
+| `GET /v1/api-keys?owner_user_id=&audience=` | filtros opcionais (AND), `created_at DESC, id DESC`; inclui revogadas/expiradas; `{api_keys:[…]}` só metadados |
+| `POST /v1/api-keys/:id/revoke` | body opcional `{audience}` (escopo); idempotente (mantém o `revoked_at` original) → `200 {api_key}`; id inexistente/não-UUID/audience diferente → `404 api key not found` |
+| `PATCH /v1/api-keys/:id` | renomear: `{name, audience?}` → `200 {api_key}`; `name` é o **único** campo editável (≤ 100, vazio → `NULL`); qualquer outro campo → `400 only name is editable`; `404` como no revoke. Mudar validade = revogar + criar |
+| `POST /v1/api-keys/verify` | `{key, audience}` → `200 {valid:true, key_id, owner_user_id, audience}`; desconhecida, sem `jns_`, revogada, expirada, dono desabilitado ou audience diferente → **um único** `401 {"error":"invalid api key"}` (mesmo corpo, sem vazar motivo); body malformado → `400 invalid request`. Só leitura |
 
 ---
 

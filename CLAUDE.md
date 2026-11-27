@@ -29,6 +29,7 @@ go test ./features/auth/ -run TestLogin
 
 # Apply DB migrations manually (Postgres)
 psql $DATABASE_URL -f migrations/001_initial.sql
+psql $DATABASE_URL -f migrations/002_api_keys.sql
 ```
 
 There is no linter/formatter config beyond standard `go vet`/`gofmt`.
@@ -42,7 +43,7 @@ There is no linter/formatter config beyond standard `go vet`/`gofmt`.
 - `internal/config`, `internal/db`, `internal/logger` are **singletons** accessed via package-level `Get()`/`DB()` functions (`config.Get()`, `db.DB()`), not injected — this is intentional, not an oversight.
 - Data access is **GORM Active Record** directly on models (`internal/models`) — no repository abstraction, no ORM-swap layer.
 - GORM `BeforeCreate` hooks assign UUID v4 primary keys on every model.
-- Every opaque token (refresh, invite, magic link, recover, 2FA challenge) is stored **hashed only** (`models.HashToken`, SHA-256) — never store or log the raw token.
+- Every opaque token (refresh, invite, magic link, recover, 2FA challenge) is stored **hashed only** (`models.HashToken`, SHA-256) — never store or log the raw token. API keys follow the same rule: only `key_hash` (SHA-256 of the full `jns_…` key) is persisted; the raw key is returned once by create and never stored, logged or returned again.
 
 **Feature packages** (`features/<name>/handler.go`, each with its own `RegisterRoutes`):
 - `auth` — login, refresh (rotation + reuse detection), logout, magic link, `/me`
@@ -50,9 +51,10 @@ There is no linter/formatter config beyond standard `go vet`/`gofmt`.
 - `password` — forgot/reset recovery flow
 - `twofa` — 2FA verify/enable/disable
 - `health` — liveness + DB check, mounted at both `/health` and `/v1/health`
+- `apikeys` — per-product API keys under `/v1/api-keys` (create, list, revoke, rename via `PATCH`, verify), all behind `ServiceKeyAuth()`; table `api_keys` (`migrations/002_api_keys.sql`). Janus does identity only: verify returns `key_id`/`owner_user_id`/`audience`, never scopes or roles — the product authorizes
 
 **Cross-cutting `internal/`:**
-- `internal/middleware/auth.go` — `JWTAuth()` (Bearer JWT, sets `user_id`/`jti`/`2fa_verified` in context) and `ServiceKeyAuth()` (constant-time compare against `SERVICE_KEYS`, for the CRUD/invite endpoints — there is no per-user admin role, only machine service keys)
+- `internal/middleware/auth.go` — `JWTAuth()` (Bearer JWT, sets `user_id`/`jti`/`2fa_verified` in context) and `ServiceKeyAuth()` (constant-time compare against `SERVICE_KEYS`, for the CRUD/invite and `/v1/api-keys` endpoints — there is no per-user admin role, only machine service keys)
 - `internal/middleware/ratelimit.go` — in-memory rate limiting and account/IP lockout (does **not** sync across replicas — see README Security Notes)
 
 **Auth/session model to keep consistent when touching this code:**
@@ -63,6 +65,7 @@ There is no linter/formatter config beyond standard `go vet`/`gofmt`.
 - Soft-disable (`disabled_at`) revokes refresh tokens immediately, but existing access JWTs remain valid until natural expiry (middleware doesn't re-check `disabled_at` per request in this MVP) — this is a known/accepted limitation, not a bug to silently fix.
 - Login has a single authentication failure: `401 invalid credentials` for unknown email, no password, wrong password and disabled account alike (same body, one bcrypt each via a dummy hash). Never reintroduce an `account disabled` response; wrong password counts toward lockout, a correct password on a disabled account does not (see `AUTH-MVP.md` §7).
 - Magic link and password-reset requests always respond generically regardless of whether the email exists (no email enumeration).
+- API keys: `jns_` prefix + 64 hex; `expires_in_days` integer 1..365 or absent/`null` = never expires; `audience` required and `audience_type` only `"text"` (reserved for a future second type); `name` is the only editable field (`PATCH`, else `400 only name is editable`); revoke is idempotent. Verify has a single failure: `401 invalid api key` with the same body for unknown, unprefixed, revoked, expired, disabled-owner and wrong-audience keys — never add a reason-specific response. No roles/scopes on keys (`AUTH-MVP.md` §10).
 
 ## Testing conventions
 
