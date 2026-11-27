@@ -24,12 +24,18 @@ type lockoutEntry struct {
 const (
 	limiterShards = 32
 	sweepAfter    = 1024
+	// sweepInterval bounds how often a shard scans a map. Without it a shard
+	// that stays at sweepAfter entries (live windows, partial lockout counts)
+	// would scan the whole map under its lock on every request.
+	sweepInterval = 30 * time.Second
 )
 
 type limiterShard struct {
-	mu       sync.Mutex
-	rates    map[string]*rateLimitEntry
-	lockouts map[string]*lockoutEntry
+	mu               sync.Mutex
+	rates            map[string]*rateLimitEntry
+	lockouts         map[string]*lockoutEntry
+	nextRateSweep    time.Time
+	nextLockoutSweep time.Time
 }
 
 var shards [limiterShards]limiterShard
@@ -82,9 +88,10 @@ func RateLimit() gin.HandlerFunc {
 }
 
 func (s *limiterShard) sweepRates(now time.Time) {
-	if len(s.rates) < sweepAfter {
+	if len(s.rates) < sweepAfter || now.Before(s.nextRateSweep) {
 		return
 	}
+	s.nextRateSweep = now.Add(sweepInterval)
 	for k, e := range s.rates {
 		if now.After(e.windowEnd) {
 			delete(s.rates, k)
@@ -158,9 +165,10 @@ func ClearLockout(identifier string) {
 }
 
 func (s *limiterShard) sweepLockouts(now time.Time, threshold int) {
-	if len(s.lockouts) < sweepAfter {
+	if len(s.lockouts) < sweepAfter || now.Before(s.nextLockoutSweep) {
 		return
 	}
+	s.nextLockoutSweep = now.Add(sweepInterval)
 	for k, e := range s.lockouts {
 		if e.failCount >= threshold && !e.lockedUntil.IsZero() && now.After(e.lockedUntil) {
 			delete(s.lockouts, k)

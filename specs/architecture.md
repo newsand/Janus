@@ -76,7 +76,7 @@ Decisions taken after the first cut, kept here so the code does not look like it
 - **Refresh stays one transaction** ([`auth.md`](auth.md) §4). The revoke of the presented token and the insert of the next one commit together; a failure rolls both back and the presented token stays valid (`500`). Reuse still commits the family revoke before `401`. Measured on localhost Postgres: one in-flight refresh got slightly slower (~1.9 ms → ~2.2 ms); 16 concurrent refreshes went from about 1500 req/s to about 2300, and p99 from about 41 ms to about 19 ms. Do not split the transaction to win back the single-request millisecond.
 - **Pool idle = open (25), prepared statements after migrations.** Same section §5.
 - **Service-key hashes are cached; every key is compared, with no early exit** ([`auth.md`](auth.md) §11). The presented key is still hashed per request.
-- **Rate-limit shards and the 1024-entry sweep do not change the IP+path window** ([`auth.md`](auth.md) §6). Partial lockout counts are not swept.
+- **Rate-limit shards and the 1024-entry sweep do not change the IP+path window** ([`auth.md`](auth.md) §6). Partial lockout counts are not swept. Each shard sweeps at most once every 30s: a shard held at 1024+ live entries or partial counts would otherwise rescan its whole map under the lock on every request.
 - **Left out on purpose.** No cache of JWT verification or of bcrypt results. Bcrypt cost stays 12, including the dummy hash. No group commit across requests. No `synchronous_commit = off`. No custom HTTP parser. Access tokens stay HMAC checks with no database read.
 
 ## 9. Consuming products
