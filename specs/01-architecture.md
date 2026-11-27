@@ -75,21 +75,21 @@ Leveled colored logger (`LOG_LEVEL`: debug/info/warn/error, default info). `requ
 
 ## Runtime
 - Startup logs the version (`alfa`, hard-coded in `config.Load`).
-- Environment variables (all read in `internal/config`): `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `MAGIC_LINK_TTL`, `INVITE_TTL`, `RECOVER_TTL`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW`, `LOCKOUT_THRESHOLD`, `LOCKOUT_DURATION`, `MAILER_STUB`. Table with defaults in `05-non-negotiables.md` `## Configuration`; `.env.example` lists exactly these (no API-key variable, no mailer provider variables). An unparseable duration/int/bool silently falls back to the default.
+- Environment variables (all read in `internal/config`): `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS`, the TTL and rate-limit variables, and the mailer set (`MAILER_STUB`, `MAILER_PROVIDER`, SMTP, SendPulse, `MAIL_FROM_*`, `APP_BASE_URL`, `MAILER_WORKER_INTERVAL`, `MAILER_MAX_ATTEMPTS`). Defaults are in `05-non-negotiables.md` and `.env.example`. An unparseable duration/int/bool silently falls back to the default.
 - DB pool: max open 25, max idle 5, conn lifetime 1h, idle 30m; ping at startup (fatal on failure).
 - Compose: app + `postgres:16-alpine` (host port 5433, `./migrations` mounted at `/docker-entrypoint-initdb.d`, so both SQL files run on a fresh volume), `MAILER_STUB=true`, `DEV_ENV` default `true`, `SERVICE_KEYS` default `key1,key2`.
 
 ## Migrations
-`migrations/001_initial.sql` (extension `uuid-ossp`; tables `users`, `refresh_tokens`, `invites`, `magic_tokens`, `recover_tokens`, `two_fa_challenges` with indexes) and `migrations/002_api_keys.sql` (table `api_keys`, indexes on `owner_user_id` and `audience`). They are plain SQL, applied **manually** (`psql $DATABASE_URL -f migrations/00N_*.sql`) or by the compose entrypoint on a fresh volume. There is no embedded runner and no `schema_migrations` table in this checkout (`main` never calls AutoMigrate or a migrator). GORM models match the SQL; tests use `AutoMigrate` on SQLite.
+`migrations/001_initial.sql`, `migrations/002_mail_outbox.sql`, `migrations/002_api_keys.sql` and `migrations/003_refresh_family_active.sql`. On every start `migrations.Up` applies pending files and records them in `schema_migrations`. Compose also mounts `./migrations` on a fresh Postgres volume.
 
 ## Design decisions (kept so the code does not look like it drifted)
-- **Invite returns its token only in stub mode.** With `MAILER_STUB=true`, `POST /v1/invites` includes `token` and `expires_at`; with `MAILER_STUB=false` it does not (and, in this checkout, nothing is delivered: see feature-mailer).
+- **Invite returns its token only in stub mode.** With `MAILER_STUB=true`, `POST /v1/invites` includes `token` and `expires_at` and the stub logs the message. With `MAILER_STUB=false` the token stays in the email (`internal/mailer`).
 - **`GET /v1/users` is paginated** (100 per page, `?page=N`, `created_at DESC, id DESC`); no search by email.
 - **Login has a single failure** (`401 invalid credentials`), exactly one bcrypt per attempt (dummy hash when none exists). `account disabled` was removed from login and refresh.
 - **`nome` is trimmed and never blank**; blank on invite accept falls back to the email.
 - **Changing `email` revokes all refresh tokens**, like disabling does. Issued access JWTs live until expiry (accepted limitation).
 - **`DEV_ENV` and secret validation**: default is strict production (see 05).
-- **Forgot-password is always a generic 200**, also for invalid email or bind error (decision #12).
+- **Forgot-password and magic link** require a service key and `{email, subject, body}`. Bind failure is `400`. A valid body gets the generic `200` for unknown or disabled accounts.
 - **API keys**: hash-only, identity-only verify with one indistinguishable 401, rename-only edit (decision #2), non-UUID owner -> `400 invalid owner` before any query (decision #9, T28).
 - **Quality gate** for Janus only (decisions #3, #7, #8, #11, #13): see 05.
 

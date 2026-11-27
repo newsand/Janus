@@ -15,9 +15,9 @@ Prefix `/v1` on every route; `GET /health` is also mounted without prefix. Conte
 | POST | `/auth/refresh` | — (rate limit) | Refresh | auth |
 | POST | `/auth/logout` | JWT (rate limit) | Logout | auth |
 | GET | `/me` | JWT | GetMe | auth |
-| POST | `/auth/magic-link` | — (rate limit) | RequestMagicLink | auth |
+| POST | `/auth/magic-link` | service key (rate limit) | RequestMagicLink | auth |
 | POST | `/auth/magic-link/consume` | — (rate limit) | ConsumeMagicLink | auth |
-| POST | `/password/forgot` | — (rate limit) | Forgot | password |
+| POST | `/password/forgot` | service key (rate limit) | Forgot | password |
 | POST | `/password/reset` | — (rate limit) | Reset | password |
 | POST | `/auth/2fa/verify` | — (rate limit) | Verify | twofa |
 | POST | `/me/2fa/enable`, `/me/2fa/disable` | JWT | Enable, Disable | twofa |
@@ -55,18 +55,20 @@ POST /auth/logout -> Logout (JWT)
 GET /me -> GetMe (JWT)
 200: { id, email, nome, "2fa_enabled": bool } · 401 · 500
 
-POST /auth/magic-link -> RequestMagicLink
-Request: { email: string }
-200: { message: "if the email exists, a magic link will be sent" } always (also bind error / unknown / disabled / no password / failure)
+POST /auth/magic-link -> RequestMagicLink (service key, rate limit)
+Request: { email: string, subject: string(max 200), body: string(max 10000, must contain {{link}}) }
+200: { message: "if the email exists, a magic link will be sent" } for a valid body (unknown / disabled / no password / enqueue failure)
+400: { error: "invalid request" } · 422: { error: "body must contain {{link}}" } · 401 · 429
 
 POST /auth/magic-link/consume -> ConsumeMagicLink
 Request: { token: string }
 200: token response | { requires_2fa: true, challenge_token } · 400: { error: "invalid request" } · 401: { error: "invalid or expired token" }
 
 ## password
-POST /password/forgot -> Forgot
-Request: { email: string }
-200: { message: "if the email exists, a recovery link will be sent" } always, including invalid email and bind error (decision #12). Never 400, never 422.
+POST /password/forgot -> Forgot (service key, rate limit)
+Request: { email: string, subject: string(max 200), body: string(max 10000, must contain {{link}}) }
+200: { message: "if the email exists, a recovery link will be sent" } for a valid body (unknown / disabled / enqueue failure)
+400: { error: "invalid request" } · 422: { error: "body must contain {{link}}" } · 401 · 429
 
 POST /password/reset -> Reset
 Request: { token: string, new_password: string(min 8) }
@@ -106,8 +108,8 @@ Request: { email?, nome?, telefone?, cpf?, disabled_at?: string } (non-empty dis
 Effect: disabling or email change revokes all refresh tokens.
 
 POST /invites -> CreateInvite (service key)
-Request: { email: string(valid) }
-201: { message: "invite sent", email } (+ token, expires_at only when MAILER_STUB=true) · 400: { error: "invalid request" } · 500
+Request: { email: string(valid), subject: string(max 200), body: string(max 10000, must contain {{link}}) }
+201: { message: "invite sent", email } (+ token, expires_at only when MAILER_STUB=true) · 400: { error: "invalid request" } · 422: { error: "body must contain {{link}}" } · 500
 
 POST /invites/accept -> AcceptInvite
 Request: { token: string, password: string(min 8), nome?: string }

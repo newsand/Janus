@@ -5,9 +5,8 @@
 - Every endpoint, status code, body, model field, migration, env var, middleware and package checked against the code.
 
 ### Decisions outside the spec
-- Code wins over the old docs: no mailer/outbox, no embedded migration runner, magic-link/forgot/invite take only `{email}`, magic-link and forgot are public (rate limited). Upstream mailer content kept as reference in feature-mailer (NOT implemented).
+- Code from `latest` already has the mailer (`internal/mailer`, `mail_outbox`, SMTP and SendPulse) and applies SQL migrations on boot. The API-key spec that said the mailer was not implemented was describing an older checkout; this file now matches the code.
 
 ### Follow-ups
-- TBD: port the upstream mailer or keep the stub.
-- TBD: `audience_type` second type.
+- `audience_type` second type is still open.
 - TBD: split auth/users handler.go per operation (L1 trigger exceeded).

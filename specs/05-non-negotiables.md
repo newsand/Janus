@@ -13,7 +13,7 @@
 - **Lockout** (in memory, per process): key = email exactly as submitted (`login:<email>`, not IP); `LOCKOUT_THRESHOLD` (default 5) failures since the last success lock the key for `LOCKOUT_DURATION` (default 15m); success clears; while locked `429 account temporarily locked`, identical for known and unknown emails. Failures below the threshold have no time decay.
 - **Rate limit** (in memory, per process): fixed window per `client IP:request path`; `RATE_LIMIT_REQUESTS` (default 5) per `RATE_LIMIT_WINDOW` (default 1m); rejected requests still count; over limit `429 rate limit exceeded`. Applies to everything under `/v1/auth/*` (login, refresh, logout, magic-link, magic-link/consume, 2fa/verify), `/v1/password/*`, and `POST /v1/invites/accept`. Does **not** apply to `/v1/users`, `POST /v1/invites`, `/v1/api-keys/*`, `/v1/me/*`, health. Not synchronized across replicas; reset on restart.
 - **Service keys**: header `Authorization: Bearer <key>`; `SERVICE_KEYS` comma-separated, whitespace trimmed, empty entries dropped; constant-time comparison (SHA-256 of both sides + `ConstantTimeCompare`); missing/malformed header -> `401`, wrong -> `401 invalid service key` + warning with client IP. Protects all of `/v1/users`, all of `/v1/api-keys`, `POST /v1/invites`. It is a machine secret: no per-user admin role, CRUD never opens with a user JWT, never reaches a browser. Rotation: keep two keys (current + previous), then drop the old; two are a recommendation, validation only requires non-empty.
-- **Generic responses** (no email enumeration): `POST /auth/magic-link` and `POST /password/forgot` always `200` generic, also for invalid email/bind error (decision #12); `POST /password/reset` and consume answer one identical `401` for unknown/used/expired.
+- **Generic responses** (no email enumeration): after a valid `{email, subject, body}`, `POST /auth/magic-link` and `POST /password/forgot` answer `200` generic for unknown, disabled and (magic link) no-password. Bind failure is `400`; missing `{{link}}` is `422`. Both routes require a service key. `POST /password/reset` and consume answer one identical `401` for unknown/used/expired.
 - **API keys**: verify answers one indistinguishable `401 invalid api key`; identity only; `/v1/api-keys/*` never opens without a service key; non-UUID `owner_user_id` -> `400 invalid owner` before any query; edit is rename only (decision #2).
 - **Startup secret validation** (`Config.Validate`, called only from `main`): `DEV_ENV=true` -> nothing enforced (warning logged). `DEV_ENV` unset/empty/`false` (default = production) -> the service does not start if `JWT_SECRET` has < 45 chars, `SERVICE_KEYS` is empty, or any key has < 45 chars (`MinSecretLength = 45`). The built-in default `change-me-in-production` works only in dev.
 - Never log password, token, API key, TOTP secret, or service key; never read or write `.env` (only `.env.example`).
@@ -37,8 +37,15 @@
 | `RATE_LIMIT_WINDOW` | `1m` | |
 | `LOCKOUT_THRESHOLD` | `5` | |
 | `LOCKOUT_DURATION` | `15m` | |
-| `MAILER_STUB` | `true` | stub only (see feature-mailer); `false` delivers nothing in this checkout |
-Unparseable values silently fall back to the default. No env var for API keys, mailer provider, SMTP or SendPulse exists in this checkout. Any new env var read in code must be added here and to `.env.example`.
+| `MAILER_STUB` | `true` | `true` logs and marks the outbox row sent; `false` delivers via `MAILER_PROVIDER` |
+| `MAILER_PROVIDER` | `smtp` | `smtp` or `sendpulse` when `MAILER_STUB=false` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | port `587` | required for `smtp` when not stubbed (`SMTP_PORT` default `587`) |
+| `SENDPULSE_USER_ID`, `SENDPULSE_SECRET` | empty | required for `sendpulse` when not stubbed |
+| `MAIL_FROM_NAME` | `Janus` | |
+| `MAIL_FROM_EMAIL`, `APP_BASE_URL` | empty | required when `MAILER_STUB=false` |
+| `MAILER_WORKER_INTERVAL` | `2s` | real delivery only |
+| `MAILER_MAX_ATTEMPTS` | `5` | |
+Unparseable values silently fall back to the default. Any new env var read in code must be added here and to `.env.example`.
 
 ## Quality gate (skill quality-gate-lefthook; applies to root `janus` only: decision #3)
 - Thresholds (`quality-baseline.json`): `cyclomatic_max: 10` · `cognitive_max: 15` · `duplication_max_percent: 3` · `security_fail_severity: medium` · `semgrep_configs: ["p/default"]`.
@@ -76,5 +83,5 @@ Unparseable values silently fall back to the default. No env var for API keys, m
 - Changing `email` through `PATCH /users/:id` revokes all refresh tokens; `nome`, `telefone`, `cpf` revoke nothing; no standalone revoke endpoint.
 - Rate limit and lockout do not synchronize between replicas and reset on restart.
 - 2FA: a disabled user can still obtain tokens through verify; a TOTP code can be replayed within its window; no per-challenge attempt cap. Do not enable 2FA in production yet.
-- Migrations are applied manually (or by the compose entrypoint on a fresh volume); no runner, no `schema_migrations`.
-- Magic link, forgot-password and invite deliver no email in this checkout (stub logs only).
+- Migrations run on boot (`migrations.Up`): pending `migrations/*.sql` are applied and recorded in `schema_migrations`.
+- Magic link, forgot-password and invite enqueue `mail_outbox`. `MAILER_STUB=true` only logs; `MAILER_STUB=false` sends through SMTP or SendPulse.
