@@ -335,14 +335,6 @@ func ConsumeMagicLink(c *gin.Context) {
 	respondAuthenticated(c, user)
 }
 
-// rejectReusedRefresh revokes every still-active token of the family and
-// answers 401: a reused refresh token means the family may be compromised.
-func rejectReusedRefresh(c *gin.Context, familyID string) {
-	db.DB().Model(&models.RefreshToken{}).
-		Where("family_id = ? AND revoked_at IS NULL", familyID).
-		Update("revoked_at", time.Now())
-	c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-}
 
 // respondAuthenticated finishes a first-factor login: users with 2FA get a
 // challenge token instead of a session.
