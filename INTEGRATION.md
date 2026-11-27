@@ -22,6 +22,7 @@ Guia para clientes (front-ends, BFFs, apps mobile) consumirem o serviço de aute
 10. [Impacto de Usuário Desabilitado](#impacto-de-usuário-desabilitado)
 11. [Referência de Erros](#referência-de-erros)
 12. [Anti-Patterns (Checklist)](#anti-patterns-checklist)
+13. [API Keys — Verificação Server-Side](#api-keys--verificação-server-side)
 
 ---
 
@@ -117,7 +118,7 @@ curl -X POST https://auth.example.com/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "usuario@exemplo.com",
-    "password": "senhasegura123"
+    "password": "<password>"
   }'
 ```
 
@@ -128,8 +129,8 @@ HTTP/1.1 200 OK
 ```
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "a1b2c3d4e5f6...",
+  "access_token": "<access_token>",
+  "refresh_token": "<refresh_token>",
   "token_type": "Bearer",
   "expires_in": 900
 }
@@ -143,7 +144,7 @@ HTTP/1.1 200 OK
 ```json
 {
   "requires_2fa": true,
-  "challenge_token": "f7e8d9c0b1a2..."
+  "challenge_token": "<challenge_token>"
 }
 ```
 
@@ -608,7 +609,7 @@ async function refreshWithLeaderElection() {
 curl -X POST https://auth.example.com/v1/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{
-    "refresh_token": "a1b2c3d4e5f6..."
+    "refresh_token": "<refresh_token>"
   }'
 ```
 
@@ -619,8 +620,8 @@ HTTP/1.1 200 OK
 ```
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "novo-token-opaco...",
+  "access_token": "<access_token>",
+  "refresh_token": "<new_refresh_token>",
   "token_type": "Bearer",
   "expires_in": 900
 }
@@ -642,7 +643,7 @@ HTTP/1.1 200 OK
 
 ## Fluxo: Login com 2FA
 
-**Aviso:** o 2FA do Janus **ainda não é funcional/seguro o bastante para produção**. **Não** habilite `2fa_enabled=true` em prod. Falhas conhecidas: usuário desabilitado ainda pode receber tokens no fluxo 2FA; replay de TOTP possível; sem limite de tentativas no challenge.
+**Aviso:** o 2FA do Janus **ainda não é funcional/seguro o bastante para produção**. **Não** habilite `2fa_enabled=true` em prod. Falhas conhecidas: usuário desabilitado ainda pode receber tokens no fluxo 2FA; replay de TOTP possível; sem limite de tentativas no challenge. Ver `corrections.md`.
 
 Quando o usuário tem 2FA habilitado, o login retorna um `challenge_token` ao invés de tokens. O cliente deve coletar o código TOTP e enviá-lo.
 
@@ -659,7 +660,7 @@ Quando o usuário tem 2FA habilitado, o login retorna um `challenge_token` ao in
 curl -X POST https://auth.example.com/v1/auth/2fa/verify \
   -H "Content-Type: application/json" \
   -d '{
-    "challenge_token": "f7e8d9c0b1a2...",
+    "challenge_token": "<challenge_token>",
     "code": "123456"
   }'
 ```
@@ -671,8 +672,8 @@ HTTP/1.1 200 OK
 ```
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "a1b2c3d4e5f6...",
+  "access_token": "<access_token>",
+  "refresh_token": "<refresh_token>",
   "token_type": "Bearer",
   "expires_in": 900
 }
@@ -769,8 +770,8 @@ HTTP/1.1 200 OK
 curl -X POST https://auth.example.com/v1/password/reset \
   -H "Content-Type: application/json" \
   -d '{
-    "token": "abc123def456...",
-    "new_password": "novasenhasegura123"
+    "token": "<reset_token>",
+    "new_password": "<new_password>"
   }'
 ```
 
@@ -828,8 +829,8 @@ Com `MAILER_STUB=true`, a resposta 201 pode incluir `token` e `expires_at` (só 
 curl -X POST https://auth.example.com/v1/invites/accept \
   -H "Content-Type: application/json" \
   -d '{
-    "token": "convite-token-abc123...",
-    "password": "senhasegura123",
+    "token": "<invite_token>",
+    "password": "<password>",
     "nome": "Nome do Usuário"
   }'
 ```
@@ -913,7 +914,7 @@ HTTP/1.1 200 OK
 curl -X POST https://auth.example.com/v1/auth/magic-link/consume \
   -H "Content-Type: application/json" \
   -d '{
-    "token": "magic-token-xyz789..."
+    "token": "<magic_token>"
   }'
 ```
 
@@ -924,8 +925,8 @@ HTTP/1.1 200 OK
 ```
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "a1b2c3d4e5f6...",
+  "access_token": "<access_token>",
+  "refresh_token": "<refresh_token>",
   "token_type": "Bearer",
   "expires_in": 900
 }
@@ -939,7 +940,7 @@ HTTP/1.1 200 OK
 ```json
 {
   "requires_2fa": true,
-  "challenge_token": "f7e8d9c0b1a2..."
+  "challenge_token": "<challenge_token>"
 }
 ```
 
@@ -1035,6 +1036,45 @@ async function createInvite(email) {
   });
 
   return response.json();
+}
+```
+
+---
+
+## API Keys — Verificação Server-Side
+
+API key é a credencial que um **sistema terceiro** usa para chamar o **backend do produto** — nunca o Janus. O Janus guarda e verifica a chave e devolve **só identidade**; **quem autoriza é o produto** (sem scopes/roles na resposta). Todas as rotas `/v1/api-keys*` exigem **service key** (`ServiceKeyAuth`), então só o backend do produto as chama — nunca o browser nem o terceiro.
+
+| Método | Rota | Uso |
+|---|---|---|
+| POST | `/v1/api-keys` | criar: `{owner_user_id, audience, audience_type?: "text", expires_in_days?: 1..365 \| null, name?}` → `201 {key, api_key}` |
+| GET | `/v1/api-keys?owner_user_id=&audience=` | listar metadados (nunca hash nem chave crua) → `200 {api_keys}` |
+| POST | `/v1/api-keys/:id/revoke` | revogar, body opcional `{audience}` → `200 {api_key}` · `404 api key not found` |
+| PATCH | `/v1/api-keys/:id` | renomear `{name, audience?}` → `200 {api_key}` · outro campo → `400 only name is editable` · `404 api key not found` |
+| POST | `/v1/api-keys/verify` | `{key, audience}` → `200 {valid, key_id, owner_user_id, audience}` · `401 invalid api key` |
+
+Regras:
+
+- A chave crua (`jns_` + 64 hex) aparece **uma única vez**, no `201` do create. O Janus guarda só o hash SHA-256; o produto também não deve guardar nem logar a chave crua.
+- `expires_in_days` ausente/`null` = nunca expira; fora de `1..365` → `400 expires_in_days must be between 1 and 365`.
+- `audience_type` só aceita `"text"` (reservado para um 2º tipo de verificação futuro).
+- Verify responde um `401 {"error":"invalid api key"}` **idêntico** para chave desconhecida, sem prefixo `jns_`, revogada, expirada, dono desabilitado ou audience diferente — não tente distinguir o motivo.
+- O produto pode separar o tipo de credencial pelo prefixo do bearer: `jns_` = API key (verificar no Janus com a própria `audience`), `eyJ` = JWT de usuário.
+
+```javascript
+// Backend do produto (nunca no browser)
+async function verifyApiKey(key) {
+  const res = await fetch(`${JANUS_URL}/v1/api-keys/verify`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.JANUS_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ key, audience: 'meu-produto' }),
+  });
+  if (res.status === 401) return null; // invalid api key
+  if (!res.ok) throw new Error('identity service unavailable');
+  return res.json(); // { valid, key_id, owner_user_id, audience } — o produto decide o que permitir
 }
 ```
 

@@ -1,0 +1,5 @@
+- nomes de funções privadas e arquivos dentro de uma operation ou feature (respeitando 05 e a proibição de `shared`/`helpers`/`utils`)
+- texto das mensagens de log (nunca com segredo, token cru ou chave de API)
+- mensagens de `details` nos `400` de bind (`CreateUser`, `AcceptInvite`, `Reset`); o campo `error` e o status são contrato
+- valores de teste, nomes de testes e helpers de teste em `*_test.go` do pacote
+- ajuste de `MaxOpenConns`/`MaxIdleConns` do pool (desde que sem nova dependência)

@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"github.com/newsand/janus/internal/config"
+	"github.com/newsand/janus/features/auth"
 	"github.com/newsand/janus/internal/db"
 	"github.com/newsand/janus/internal/logger"
 	"github.com/newsand/janus/internal/middleware"
@@ -80,21 +78,12 @@ func Verify(c *gin.Context) {
 
 	db.DB().Delete(&challenge)
 
-	tokens, err := issueTokens(user.ID)
-	if err != nil {
-		logger.Error("Failed to issue tokens: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
-	c.JSON(http.StatusOK, tokens)
+	auth.RespondWithNewSession(c, user.ID)
 }
 
 func Enable(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-
-	var user models.User
-	if err := db.DB().First(&user, "id = ?", userID).Error; err != nil {
+	user, err := auth.CurrentUser(c)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -134,12 +123,11 @@ func Enable(c *gin.Context) {
 
 	db.DB().Model(&user).Update("two_fa_enabled", true)
 
-	logger.Info("2FA enabled for user: %s", userID)
+	logger.Info("2FA enabled for user: %s", user.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "2FA enabled"})
 }
 
 func Disable(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	var req DisableRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "password or code required"})
@@ -151,8 +139,8 @@ func Disable(c *gin.Context) {
 		return
 	}
 
-	var user models.User
-	if err := db.DB().First(&user, "id = ?", userID).Error; err != nil {
+	user, err := auth.CurrentUser(c)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -186,7 +174,7 @@ func Disable(c *gin.Context) {
 		"two_fa_secret":  nil,
 	})
 
-	logger.Info("2FA disabled for user: %s", userID)
+	logger.Info("2FA disabled for user: %s", user.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "2FA disabled"})
 }
 
@@ -196,45 +184,4 @@ func generateTOTPSecret() (string, error) {
 		return "", err
 	}
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret), nil
-}
-
-func issueTokens(userID string) (gin.H, error) {
-	cfg := config.Get()
-
-	familyID := uuid.New().String()
-	jti := uuid.New().String()
-	now := time.Now()
-
-	claims := jwt.MapClaims{
-		"sub":          userID,
-		"iat":          now.Unix(),
-		"exp":          now.Add(cfg.AccessTokenTTL).Unix(),
-		"jti":          jti,
-		"2fa_verified": true,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	accessToken, err := token.SignedString([]byte(cfg.JWTSecret))
-	if err != nil {
-		return nil, err
-	}
-
-	opaqueToken := models.GenerateOpaqueToken()
-	refreshToken := models.RefreshToken{
-		UserID:    userID,
-		TokenHash: models.HashToken(opaqueToken),
-		FamilyID:  familyID,
-		ExpiresAt: now.Add(cfg.RefreshTokenTTL),
-	}
-
-	if err := db.DB().Create(&refreshToken).Error; err != nil {
-		return nil, err
-	}
-
-	return gin.H{
-		"access_token":  accessToken,
-		"refresh_token": opaqueToken,
-		"token_type":    "Bearer",
-		"expires_in":    int(cfg.AccessTokenTTL.Seconds()),
-	}, nil
 }

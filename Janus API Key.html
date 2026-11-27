@@ -1,0 +1,219 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Janus API Key</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0F0C0D;--surface:#1A1416;--surface-2:#241B1E;--line:#3A2C30;
+  --fg:#EDE4D3;--muted:#B3A590;--gold:#D4AF5A;--burg:#8E2433;--burg-text:#E07A8A;--sky:#8FA7C2;
+  --ok:#7FBF9A;--zone:rgba(212,175,90,.06);
+  --shadow:0 18px 40px -18px rgba(0,0,0,.8);--inset:inset 0 1px 0 rgba(212,175,90,.25);
+  --f-display:"Cormorant Garamond",Georgia,serif;
+  --f-body:"IBM Plex Sans",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,monospace;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:64px;
+  --r-sm:2px;--r-md:4px;--r-lg:10px;
+  --ease-out:cubic-bezier(.2,.8,.2,1);--t-hover:220ms;--t-step:360ms;--t-stagger:70ms;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --bg:#EEF0F2;--surface:#FFFFFF;--surface-2:#FFFFFF;--line:#C9CED4;
+    --fg:#16181C;--muted:#4A5059;--gold:#80611A;--burg:#7A1E2C;--burg-text:#A4262C;--sky:#2E4A6B;
+    --ok:#1F6B4A;--zone:rgba(128,97,26,.07);--shadow:none;--inset:none;
+  }
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#EEF0F2;--surface:#FFFFFF;--surface-2:#FFFFFF;--line:#C9CED4;
+  --fg:#16181C;--muted:#4A5059;--gold:#80611A;--burg:#7A1E2C;--burg-text:#A4262C;--sky:#2E4A6B;
+  --ok:#1F6B4A;--zone:rgba(128,97,26,.07);--shadow:none;--inset:none;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:400 16px/1.65 var(--f-body);padding-inline:var(--s4);padding-block:var(--s7) var(--s8)}
+.wrap{max-width:1120px;margin:0 auto;display:grid;gap:var(--s7)}
+.eyebrow,.label{font:600 12px/1.3 var(--f-body);text-transform:uppercase;letter-spacing:.16em;color:var(--gold)}
+h1{font:600 clamp(36px,6vw,52px)/1.05 var(--f-display);margin:var(--s3) 0 var(--s4);text-wrap:balance}
+h2{font:600 34px/1.1 var(--f-display);margin:0;text-wrap:balance}
+p{margin:0;max-width:65ch;color:var(--muted)}
+code,.mono{font-family:var(--f-mono);font-size:13.5px}
+header p{font-size:17px}
+
+/* lane */
+.lane{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow),var(--inset);padding:var(--s6) var(--s5);display:grid;gap:var(--s5)}
+.lane-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:var(--s4)}
+.lane-head p{margin-top:var(--s2)}
+.replay{font:500 14px/1 var(--f-body);color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--s3) var(--s4);cursor:pointer;transition:border-color var(--t-hover) var(--ease-out),color var(--t-hover) var(--ease-out)}
+.replay:hover{border-color:var(--gold);color:var(--gold)}
+.replay:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.replay:active{background:var(--surface-2)}
+
+.scroll{overflow-x:auto}
+.seq{min-width:680px;display:grid;grid-template-columns:repeat(3,1fr);position:relative;row-gap:var(--s2)}
+.zone{grid-column:3;grid-row:1/-1;background:var(--zone);border-left:1px dashed var(--gold);border-radius:0 var(--r-md) var(--r-md) 0;position:relative}
+.zone span{position:absolute;top:var(--s2);right:var(--s3);font:600 11px/1.3 var(--f-body);letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+.actor{grid-row:1;text-align:center;padding:var(--s4) var(--s2) var(--s5);position:relative;z-index:1}
+.actor b{display:block;font:600 22px/1.1 var(--f-display);color:var(--fg)}
+.actor small{display:block;margin-top:var(--s1);font-size:13px;color:var(--muted)}
+.actor.off b,.actor.off small{opacity:.45}
+.life{grid-row:2/-1;justify-self:center;width:1px;background:var(--line);z-index:0}
+.life.off{background:repeating-linear-gradient(var(--line) 0 4px,transparent 4px 10px)}
+
+.step{position:relative;z-index:1;padding-block:var(--s2)}
+.msg{display:grid;gap:var(--s1)}
+.msg .txt{font-size:14px;color:var(--fg)}
+.msg .txt .n{font:500 12px/1 var(--f-mono);color:var(--gold);margin-right:var(--s2)}
+.msg code{color:var(--sky);word-break:break-word}
+.msg code.k{color:var(--burg-text)}
+.msg code.ok{color:var(--ok)}
+.arrow{height:10px;position:relative}
+.arrow::before{content:"";position:absolute;left:0;right:0;top:4px;height:2px;background:var(--fg)}
+.arrow::after{content:"";position:absolute;top:0;border:5px solid transparent}
+.r .arrow::after{right:-2px;border-left:8px solid var(--fg);border-right:0}
+.l .arrow::after{left:-2px;border-right:8px solid var(--fg);border-left:0}
+.ret .arrow::before{background:repeating-linear-gradient(90deg,var(--muted) 0 6px,transparent 6px 11px)}
+.ret.r .arrow::after{border-left-color:var(--muted)}
+.ret.l .arrow::after{border-right-color:var(--muted)}
+/* span centers: two-column span → 25%..75% of the span */
+.c12{grid-column:1/3;margin-inline:25%}
+.c23{grid-column:2/4;margin-inline:25%}
+.self{display:grid;justify-items:center}
+.self .box{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s3) var(--s4);max-width:92%;font-size:14px;box-shadow:var(--inset);transition:border-color var(--t-hover) var(--ease-out)}
+.self .box:hover{border-color:var(--gold)}
+.self .box .n{font:500 12px/1 var(--f-mono);color:var(--gold);margin-right:var(--s2)}
+.self .box small{display:block;color:var(--muted);font-size:13px;margin-top:var(--s1)}
+.s1{grid-column:1}.s2{grid-column:2}.s3{grid-column:3}
+
+.note{border-top:1px solid var(--line);padding-top:var(--s4);display:flex;flex-wrap:wrap;gap:var(--s3) var(--s6)}
+.note div{display:grid;gap:var(--s1);min-width:200px;flex:1}
+.note div p{font-size:14px}
+
+/* entrance: page at rest is fully visible; replay re-runs it */
+@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.lane.play .step{animation:in var(--t-step) var(--ease-out) both;animation-delay:calc(var(--i) * var(--t-stagger) * 3)}
+@media (prefers-reduced-motion:reduce){
+  .lane.play .step{animation:none}
+  .replay,.self .box{transition:none}
+}
+
+.compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--s4)}
+.compare article{border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s5);display:grid;gap:var(--s2);align-content:start;background:var(--surface)}
+.compare h3{font:600 22px/1.15 var(--f-display);margin:0}
+.compare ul{margin:0;padding-left:18px;color:var(--muted);font-size:14px;display:grid;gap:var(--s1)}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Janus · estudo de extensão</div>
+    <h1>Uma rota, dois caminhos de identidade</h1>
+    <p>O sistema integrado e o navegador batem na mesma rota do backend do produto. O prefixo do token decide o caminho: <code>jns_</code> é API key e é verificada no Janus pela intranet; <code>eyJ</code> é JWT e é validado ali mesmo, sem chamar ninguém. O Janus nunca é exposto à internet.</p>
+  </header>
+
+  <!-- API KEY -->
+  <section class="lane" id="lane-key" aria-labelledby="t-key">
+    <div class="lane-head">
+      <div>
+        <div class="label">Caminho A · máquina</div>
+        <h2 id="t-key">API key, verificada no Janus</h2>
+        <p>Introspecção a cada chamada (ou a cada TTL do cache). Revogação vale na hora.</p>
+      </div>
+      <button class="replay" type="button" data-lane="lane-key">Reproduzir fluxo</button>
+    </div>
+    <div class="scroll">
+      <div class="seq">
+        <div class="zone" style="grid-row:1/9"><span>intranet</span></div>
+        <div class="actor s1"><b>Sistema integrado</b><small>terceiro, na internet</small></div>
+        <div class="actor s2"><b>Backend do produto</b><small>autoriza e serve os dados</small></div>
+        <div class="actor s3"><b>Janus</b><small>só identidade</small></div>
+        <div class="life s1" style="grid-row:2/9"></div>
+        <div class="life s2" style="grid-row:2/9"></div>
+        <div class="life s3" style="grid-row:2/9"></div>
+
+        <div class="step msg r c12" style="--i:0;grid-row:2"><div class="txt"><span class="n">1</span>Requisição com a chave</div><div class="arrow"></div><code>GET /pedidos · Bearer <span class="k">jns_live_ab12…</span></code></div>
+        <div class="step self s2" style="--i:1;grid-row:3"><div class="box"><span class="n">2</span>Prefixo <code>jns_</code> → caminho API key<small>consulta cache por SHA-256 da chave</small></div></div>
+        <div class="step msg r c23" style="--i:2;grid-row:4"><div class="txt"><span class="n">3</span>Verifica a chave</div><div class="arrow"></div><code>POST /v1/api-keys/verify · service key</code></div>
+        <div class="step self s3" style="--i:3;grid-row:5"><div class="box"><span class="n">4</span>SHA-256 + busca por índice único<small>revogada, expirada ou dono desativado → inválida</small></div></div>
+        <div class="step msg l ret c23" style="--i:4;grid-row:6"><div class="txt"><span class="n">5</span>Identidade, sem permissões</div><div class="arrow"></div><code class="ok">200 {valid, key_id, owner_user_id, audience}</code></div>
+        <div class="step self s2" style="--i:5;grid-row:7"><div class="box"><span class="n">6</span>Cache 30–60 s · principal <code>{tipo:"api_key"}</code><small>o produto decide o que a chave pode ver</small></div></div>
+        <div class="step msg l ret c12" style="--i:6;grid-row:8"><div class="txt"><span class="n">7</span>Dados</div><div class="arrow"></div><code class="ok">200 [ …pedidos ]</code></div>
+      </div>
+    </div>
+    <div class="note">
+      <div><span class="label">Custo</span><p>Um hash e um <code>SELECT</code> indexado: menos de 1 ms no Janus, mais o round-trip na intranet.</p></div>
+      <div><span class="label">Janus fora</span><p>Sem cache, responder <code>503</code>. Falhar fechado: nunca liberar por padrão.</p></div>
+      <div><span class="label">Falha</span><p>Qualquer motivo de chave inválida vira o mesmo <code>401 invalid api key</code>.</p></div>
+    </div>
+  </section>
+
+  <!-- JWT -->
+  <section class="lane" id="lane-jwt" aria-labelledby="t-jwt">
+    <div class="lane-head">
+      <div>
+        <div class="label">Caminho B · usuário</div>
+        <h2 id="t-jwt">JWT, validado no próprio backend</h2>
+        <p>Assinatura HMAC e expiração conferidas localmente. O Janus só entra no login e no refresh, a cada 15 min.</p>
+      </div>
+      <button class="replay" type="button" data-lane="lane-jwt">Reproduzir fluxo</button>
+    </div>
+    <div class="scroll">
+      <div class="seq">
+        <div class="zone" style="grid-row:1/6"><span>intranet</span></div>
+        <div class="actor s1"><b>Navegador</b><small>usuário logado</small></div>
+        <div class="actor s2"><b>Backend do produto</b><small>mesma rota</small></div>
+        <div class="actor s3 off"><b>Janus</b><small>não consultado</small></div>
+        <div class="life s1" style="grid-row:2/6"></div>
+        <div class="life s2" style="grid-row:2/6"></div>
+        <div class="life s3 off" style="grid-row:2/6"></div>
+
+        <div class="step msg r c12" style="--i:0;grid-row:2"><div class="txt"><span class="n">1</span>Requisição com o access token</div><div class="arrow"></div><code>GET /pedidos · Bearer <span class="k">eyJhbGciOi…</span></code></div>
+        <div class="step self s2" style="--i:1;grid-row:3"><div class="box"><span class="n">2</span>Prefixo <code>eyJ</code> → caminho JWT<small>HMAC com <code>JWT_SECRET</code> + <code>exp</code>, sem rede</small></div></div>
+        <div class="step self s2" style="--i:2;grid-row:4"><div class="box"><span class="n">3</span>Principal <code>{tipo:"user", id: sub}</code><small>mesma estrutura do caminho A</small></div></div>
+        <div class="step msg l ret c12" style="--i:3;grid-row:5"><div class="txt"><span class="n">4</span>Dados</div><div class="arrow"></div><code class="ok">200 [ …pedidos ]</code></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="compare" aria-label="Comparação">
+    <article>
+      <div class="label">Onde os dois se encontram</div>
+      <h3>Um middleware, um principal</h3>
+      <ul>
+        <li>Mesmo header <code>Authorization</code>; o prefixo separa os caminhos.</li>
+        <li>Os dois viram <code>{tipo, id, owner_user_id}</code> antes do handler.</li>
+        <li>Rotas podem aceitar só <code>user</code>, só <code>api_key</code> ou os dois.</li>
+      </ul>
+    </article>
+    <article>
+      <div class="label">Disponibilidade</div>
+      <h3>O Janus já é obrigatório</h3>
+      <ul>
+        <li>Sem refresh, todo usuário cai em até 15 min.</li>
+        <li>JWT degrada aos poucos; API key sem cache cai na hora.</li>
+        <li>O cache curto dá às integrações a mesma folga do JWT.</li>
+      </ul>
+    </article>
+    <article>
+      <div class="label">O que o Janus não faz</div>
+      <h3>Identidade, nunca permissão</h3>
+      <ul>
+        <li>Sem escopos nem roles na resposta do <code>verify</code>.</li>
+        <li>Chave de integração age em nome do dono, não como ele.</li>
+        <li>Terceiros nunca falam com o Janus.</li>
+      </ul>
+    </article>
+  </section>
+</div>
+
+<script>
+document.querySelectorAll('.replay').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var lane=document.getElementById(btn.dataset.lane);
+    lane.classList.remove('play');
+    void lane.offsetWidth;
+    lane.classList.add('play');
+  });
+});
+</script>
+
+</body></html>
