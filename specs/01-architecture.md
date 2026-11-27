@@ -77,10 +77,10 @@ Leveled colored logger (`LOG_LEVEL`: debug/info/warn/error, default info). `requ
 - Startup logs the version (`alfa`, hard-coded in `config.Load`).
 - Environment variables (all read in `internal/config`): `PORT`, `DATABASE_URL`, `LOG_LEVEL`, `DEV_ENV`, `JWT_SECRET`, `SERVICE_KEYS`, the TTL and rate-limit variables, and the mailer set (`MAILER_STUB`, `MAILER_PROVIDER`, SMTP, SendPulse, `MAIL_FROM_*`, `APP_BASE_URL`, `MAILER_WORKER_INTERVAL`, `MAILER_MAX_ATTEMPTS`). Defaults are in `05-non-negotiables.md` and `.env.example`. An unparseable duration/int/bool silently falls back to the default.
 - DB pool: max open 25, max idle 5, conn lifetime 1h, idle 30m; ping at startup (fatal on failure).
-- Compose: app + `postgres:16-alpine` (host port 5433, `./migrations` mounted at `/docker-entrypoint-initdb.d`, so both SQL files run on a fresh volume), `MAILER_STUB=true`, `DEV_ENV` default `true`, `SERVICE_KEYS` default `key1,key2`.
+- Compose: app + `postgres:16-alpine` (host port 5433; the app applies `migrations/` on start, Postgres does not), `MAILER_STUB=true`, `DEV_ENV` default `true`, `SERVICE_KEYS` default `key1,key2`.
 
 ## Migrations
-`migrations/001_initial.sql`, `migrations/002_mail_outbox.sql`, `migrations/002_api_keys.sql` and `migrations/003_refresh_family_active.sql`. On every start `migrations.Up` applies pending files and records them in `schema_migrations`. Compose also mounts `./migrations` on a fresh Postgres volume.
+`migrations/001_initial.sql`, `migrations/002_mail_outbox.sql`, `migrations/002_api_keys.sql` and `migrations/003_refresh_family_active.sql`. On every start `migrations.Up` applies pending files and records them in `schema_migrations`. Nothing else may run these files: running one outside `migrations.Up` (a `psql -f`, or a mount at `/docker-entrypoint-initdb.d`) creates its tables without recording the version, so the next start re-runs it and fails on `CREATE TABLE`.
 
 ## Design decisions (kept so the code does not look like it drifted)
 - **Invite returns its token only in stub mode.** With `MAILER_STUB=true`, `POST /v1/invites` includes `token` and `expires_at` and the stub logs the message. With `MAILER_STUB=false` the token stays in the email (`internal/mailer`).

@@ -31,7 +31,6 @@ services:
       - POSTGRES_DB=janus
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     ports:
       - "5433:5432"
     healthcheck:
